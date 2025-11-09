@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "SMTPServerSvc": {
+      "commandName": "Project"
+    },
+    "Container (Dockerfile)": {
+      "commandName": "Docker"
+    }
+  }
+}

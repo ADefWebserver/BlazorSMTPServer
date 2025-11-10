@@ -8,6 +8,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\BlazorSMTPServer.ServiceDefaults\BlazorSMTPServer.ServiceDefaults.csproj" />
+    <ProjectReference Include="..\SMTPServerSvc\SMTPServerSvc.csproj" />
   </ItemGroup>
 
 </Project>

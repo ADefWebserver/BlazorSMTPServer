@@ -1,4 +1,5 @@
 using BlazorSMTPServer.Components;
+using SMTPServerSvc.TestClient;
 
 namespace BlazorSMTPServer;
 
@@ -16,6 +17,20 @@ public class Program
         var app = builder.Build();
 
         app.MapDefaultEndpoints();
+
+        // Add SMTP test endpoint for development
+        app.MapGet("/test-smtp", async () =>
+        {
+            try
+            {
+                await SmtpTestClient.TestSmtpServer();
+                return Results.Ok("SMTP tests completed successfully. Check console output for details.");
+            }
+            catch (Exception ex)
+            {
+                return Results.Problem($"SMTP test failed: {ex.Message}");
+            }
+        });
 
         // Configure the HTTP request pipeline.
         if (!app.Environment.IsDevelopment())

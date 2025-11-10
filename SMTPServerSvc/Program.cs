@@ -26,8 +26,8 @@ internal class Program
         builder.Services.AddSingleton(smtpConfig ?? new SmtpServerConfiguration());
 
         // Add Aspire Azure Storage integration - these will use the connection strings provided by Aspire
-        builder.AddAzureBlobClient("blobs");
-        builder.AddAzureTableClient("tables");
+        builder.AddAzureBlobServiceClient("blobs");
+        builder.AddAzureTableServiceClient("tables");
 
         // Register custom logger provider for Table Storage
         builder.Services.AddSingleton<TableStorageLoggerProvider>(provider =>
@@ -37,12 +37,25 @@ internal class Program
         });
 
         // Register SMTP server components as SmtpServer interfaces
+        // The SmtpServer library uses a service-based architecture where core functionality
+        // is implemented through specific interfaces. We register both concrete implementations
+        // and their corresponding interfaces to enable dependency injection.
+        
+        // Message Store: Handles the storage and retrieval of incoming email messages
+        // SampleMessageStore implements IMessageStore to provide custom message handling logic
+        // This could store messages in Azure Blob Storage, databases, or other persistence layers
         builder.Services.AddSingleton<SampleMessageStore>();
         builder.Services.AddSingleton<IMessageStore>(provider => provider.GetRequiredService<SampleMessageStore>());
         
+        // Mailbox Filter: Controls which email addresses are allowed to receive messages
+        // SampleMailboxFilter implements IMailboxFilter to validate recipient addresses
+        // This provides security by rejecting emails to unauthorized recipients
         builder.Services.AddSingleton<SampleMailboxFilter>();
         builder.Services.AddSingleton<IMailboxFilter>(provider => provider.GetRequiredService<SampleMailboxFilter>());
         
+        // User Authenticator: Handles SMTP authentication for clients sending emails
+        // SampleUserAuthenticator implements IUserAuthenticator to verify user credentials
+        // This ensures only authorized users can send emails through the SMTP server
         builder.Services.AddSingleton<SampleUserAuthenticator>();
         builder.Services.AddSingleton<IUserAuthenticator>(provider => provider.GetRequiredService<SampleUserAuthenticator>());
 

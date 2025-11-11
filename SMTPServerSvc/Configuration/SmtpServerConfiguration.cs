@@ -20,7 +20,7 @@ public class SmtpServerConfiguration
     /// <summary>
     /// SMTP server ports
     /// </summary>
-    public int[] Ports { get; set; } = [25, 587];
+    public int[] Ports { get; set; } = [2525, 587];
 
     /// <summary>
     /// Allowed recipient email address

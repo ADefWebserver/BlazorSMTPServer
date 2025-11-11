@@ -3,6 +3,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using SmtpServer;
 using SMTPServerSvc.Services;
+using SMTPServerSvc.Configuration;
 
 namespace SMTPServerSvc.Services;
 
@@ -13,6 +14,7 @@ public class SmtpServerHostedService : BackgroundService
 {
     private readonly ILogger<SmtpServerHostedService> _logger;
     private readonly IServiceProvider _serviceProvider;
+    private readonly SmtpServerConfiguration _configuration;
     private readonly SampleMessageStore _messageStore;
     private readonly SampleMailboxFilter _mailboxFilter;
     private readonly SampleUserAuthenticator _userAuthenticator;
@@ -21,12 +23,14 @@ public class SmtpServerHostedService : BackgroundService
     public SmtpServerHostedService(
         ILogger<SmtpServerHostedService> logger,
         IServiceProvider serviceProvider,
+        SmtpServerConfiguration configuration,
         SampleMessageStore messageStore,
         SampleMailboxFilter mailboxFilter,
         SampleUserAuthenticator userAuthenticator)
     {
         _logger = logger;
         _serviceProvider = serviceProvider;
+        _configuration = configuration;
         _messageStore = messageStore;
         _mailboxFilter = mailboxFilter;
         _userAuthenticator = userAuthenticator;
@@ -38,20 +42,27 @@ public class SmtpServerHostedService : BackgroundService
 
         try
         {
-            // Configure SMTP server options
-            var options = new SmtpServerOptionsBuilder()
-                .ServerName("BlazorSMTPServer")
-                .Port(25, 587) // Standard SMTP ports
-                .Build();
+            // Configure SMTP server options using configuration
+            var optionsBuilder = new SmtpServerOptionsBuilder()
+                .ServerName(_configuration.ServerName);
+
+            // Add configured ports
+            foreach (var port in _configuration.Ports)
+            {
+                optionsBuilder.Port(port);
+            }
+
+            var options = optionsBuilder.Build();
 
             // Create SMTP server with service provider for dependency injection
             _smtpServer = new SmtpServer.SmtpServer(options, _serviceProvider);
             
-            _logger.LogInformation("SMTP Server configured and starting on ports 25 and 587");
-            _logger.LogInformation("Allowed recipient: TestUserOne@BlazorHelpWebsiteEmail.com");
-            _logger.LogInformation("Allowed relay user: Admin");
-            _logger.LogInformation("Messages will be stored in Azure Blob Storage");
-            _logger.LogInformation("Logs will be written to Azure Table Storage");
+            _logger.LogInformation("SMTP Server configured and starting on ports {Ports}", string.Join(", ", _configuration.Ports));
+            _logger.LogInformation("Server Name: {ServerName}", _configuration.ServerName);
+            _logger.LogInformation("Allowed recipient: {AllowedRecipient}", _configuration.AllowedRecipient);
+            _logger.LogInformation("Allowed relay user: {AllowedUsername}", _configuration.AllowedUsername);
+            _logger.LogInformation("Messages will be stored in Azure Blob Storage container: {BlobContainer}", _configuration.BlobContainerName);
+            _logger.LogInformation("Logs will be written to Azure Table Storage table: {LogTable}", _configuration.LogTableName);
 
             // Start the server
             await _smtpServer.StartAsync(stoppingToken);

@@ -1,0 +1,57 @@
+@page "/features"
+
+<PageTitle>Features</PageTitle>
+
+<h1>Blazor SMTP Server Demo</h1>
+
+<p>This application showcases an SMTP server implemented with .NET Aspire. The background service accepts mail on configured ports, applies filtering and authentication, then persists messages and logs to Azure Storage.</p>
+
+<h2>What This Project Does</h2>
+<ul>
+    <li>Runs a hosted SMTP server (see <code>SmtpServerHostedService</code>).</li>
+    <li>Restricts delivery to a single allowed recipient (via <code>SampleMailboxFilter</code>).</li>
+    <li>Authenticates relay attempts with a configured username/password (<code>SampleUserAuthenticator</code>).</li>
+    <li>Saves received messages as <code>.eml</code> files into Azure Blob Storage (<code>SampleMessageStore</code>).</li>
+    <li>Writes structured operational logs to Azure Table Storage (<code>TableStorageLoggerProvider</code>).</li>
+    <li>Performs startup diagnostics for Blob & Table connectivity (<code>StorageDiagnosticService</code>).</li>
+</ul>
+
+<h2>Key Technologies</h2>
+<ul>
+    <li>.NET Aspire for service wiring & Azure client binding.</li>
+    <li>Azure Blob Storage (message persistence).</li>
+    <li>Azure Table Storage (logging & diagnostics).</li>
+    <li>Blazor for the UI shell (this page).</li>
+</ul>
+
+<h2>Message Flow</h2>
+<ol>
+    <li>Client connects on a configured SMTP port.</li>
+    <li>Optional AUTH verifies allowed relay user.</li>
+    <li>RCPT TO validated against the single allowed recipient.</li>
+    <li>Message DATA captured and enhanced with tracking headers.</li>
+    <li>Content stored in Blob Storage; metadata recorded.</li>
+    <li>Operational events logged to Table Storage.</li>
+</ol>
+
+<h2>Configuration Highlights</h2>
+<p>The <code>SmtpServerConfiguration</code> section controls:</p>
+<ul>
+    <li><code>ServerName</code> – reported SMTP server name.</li>
+    <li><code>Ports</code> – one or more listening ports.</li>
+    <li><code>AllowedRecipient</code> – only this address can receive mail.</li>
+    <li><code>AllowedUsername</code>/<code>AllowedPassword</code> – relay authentication.</li>
+    <li><code>BlobContainerName</code> – target container for messages.</li>
+    <li><code>LogTableName</code> – table for structured logs.</li>
+</ul>
+
+<h2>Extensibility Ideas</h2>
+<ul>
+    <li>Add a UI to list stored messages from Blob Storage.</li>
+    <li>Expose health & diagnostics via a status component.</li>
+    <li>Support multiple recipients or domains.</li>
+    <li>Implement spam / size limits in <code>SampleMailboxFilter</code>.</li>
+    <li>Integrate real-time log streaming via SignalR.</li>
+</ul>
+
+<p class="text-muted">This is a development/demo setup. Do not expose publicly without adding TLS, proper credential storage, and security hardening.</p>

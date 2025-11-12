@@ -9,13 +9,15 @@ namespace SMTPServerSvc.Services;
 /// </summary>
 public class TableStorageLogger : ILogger
 {
-    private readonly TableClient _tableClient;
+    private readonly TableClient? _tableClient;
     private readonly string _categoryName;
+    private readonly bool _isAvailable;
 
-    public TableStorageLogger(TableClient tableClient, string categoryName)
+    public TableStorageLogger(TableClient? tableClient, string categoryName, bool isAvailable = true)
     {
         _tableClient = tableClient;
         _categoryName = categoryName;
+        _isAvailable = isAvailable;
     }
 
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
@@ -35,6 +37,19 @@ public class TableStorageLogger : ILogger
         if (!IsEnabled(logLevel))
             return;
 
+        var message = formatter(state, exception);
+        
+        // Always log to console as fallback
+        Console.WriteLine($"[{DateTime.UtcNow:yyyy-MM-dd HH:mm:ss.fff}] [{logLevel}] {_categoryName}: {message}");
+        if (exception != null)
+        {
+            Console.WriteLine($"Exception: {exception}");
+        }
+
+        // Only attempt table storage if available
+        if (!_isAvailable || _tableClient == null)
+            return;
+
         try
         {
             var entity = new TableEntity
@@ -46,7 +61,7 @@ public class TableStorageLogger : ILogger
                 ["Category"] = _categoryName,
                 ["EventId"] = eventId.Id,
                 ["EventName"] = eventId.Name ?? "",
-                ["Message"] = formatter(state, exception),
+                ["Message"] = message,
                 ["Exception"] = exception?.ToString() ?? ""
             };
 
@@ -65,9 +80,9 @@ public class TableStorageLogger : ILogger
         }
         catch (Exception ex)
         {
-            // Fallback to console if table storage fails
-            Console.WriteLine($"Failed to log to table storage: {ex.Message}");
-            Console.WriteLine($"[{logLevel}] {_categoryName}: {formatter(state, exception)}");
+            // Don't log table storage failures to avoid infinite loops
+            // The console output above already provides the log entry
+            Console.WriteLine($"Table storage logging failed: {ex.Message}");
         }
     }
 }
@@ -78,20 +93,36 @@ public class TableStorageLogger : ILogger
 public class TableStorageLoggerProvider : ILoggerProvider
 {
     private readonly TableServiceClient _tableServiceClient;
-    private readonly TableClient _tableClient;
+    private readonly TableClient? _tableClient;
+    private readonly string _tableName;
+    private readonly bool _isAvailable;
 
-    public TableStorageLoggerProvider(TableServiceClient tableServiceClient)
+    public TableStorageLoggerProvider(TableServiceClient tableServiceClient, string tableName = "SMTPServerLogs")
     {
         _tableServiceClient = tableServiceClient;
-        _tableClient = _tableServiceClient.GetTableClient("SMTPServerLogs");
+        _tableName = tableName;
         
-        // Create table if it doesn't exist
-        _tableClient.CreateIfNotExists();
+        try
+        {
+            _tableClient = _tableServiceClient.GetTableClient(_tableName);
+            
+            // Test the connection and create table if it doesn't exist
+            _tableClient.CreateIfNotExists();
+            _isAvailable = true;
+        }
+        catch (Exception ex)
+        {
+            // Log the error but don't fail - gracefully degrade to console logging
+            Console.WriteLine($"Warning: Table Storage logging unavailable: {ex.Message}");
+            Console.WriteLine("Falling back to console logging only. Ensure Azurite is running for table storage logging.");
+            _tableClient = null;
+            _isAvailable = false;
+        }
     }
 
     public ILogger CreateLogger(string categoryName)
     {
-        return new TableStorageLogger(_tableClient, categoryName);
+        return new TableStorageLogger(_tableClient, categoryName, _isAvailable);
     }
 
     public void Dispose()

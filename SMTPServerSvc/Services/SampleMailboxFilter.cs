@@ -2,20 +2,23 @@ using Microsoft.Extensions.Logging;
 using SmtpServer;
 using SmtpServer.Mail;
 using SmtpServer.Storage;
+using SMTPServerSvc.Configuration;
 
 namespace SMTPServerSvc.Services;
 
 /// <summary>
-/// Mailbox filter that only allows emails to be received for TestUserOne@BlazorHelpWebsiteEmail.com
+/// Mailbox filter that only allows emails to be received for the configured allowed recipient
 /// </summary>
 public class SampleMailboxFilter : IMailboxFilter
 {
     private readonly ILogger<SampleMailboxFilter> _logger;
-    private readonly string _allowedRecipient = "TestUserOne@BlazorHelpWebsiteEmail.com";
+    private readonly string _allowedRecipient;
 
-    public SampleMailboxFilter(ILogger<SampleMailboxFilter> logger)
+    public SampleMailboxFilter(SmtpServerConfiguration configuration, ILogger<SampleMailboxFilter> logger)
     {
         _logger = logger;
+        _allowedRecipient = configuration.AllowedRecipient;
+        
         _logger.LogInformation("SampleMailboxFilter initialized. Only allowing emails to: {AllowedRecipient}", _allowedRecipient);
     }
 

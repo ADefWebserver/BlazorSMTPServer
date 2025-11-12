@@ -8,6 +8,7 @@ using SmtpServer.Storage;
 using SmtpServer.Authentication;
 using SMTPServerSvc.Configuration;
 using SMTPServerSvc.Services;
+using System.Collections;
 
 namespace SMTPServerSvc;
 
@@ -15,90 +16,102 @@ internal class Program
 {
     static async Task Main(string[] args)
     {
-        // Create Aspire application builder
         var builder = Host.CreateApplicationBuilder(args);
-
-        // Add Aspire service defaults (telemetry, health checks, service discovery)
         builder.AddServiceDefaults();
 
-        // Bind configuration
-        var smtpConfig = builder.Configuration.GetSection(SmtpServerConfiguration.SectionName).Get<SmtpServerConfiguration>();
-        builder.Services.AddSingleton(smtpConfig ?? new SmtpServerConfiguration());
+        // Do NOT re-add appsettings.json forcibly; Aspire already wires configuration including env vars
+        var smtpConfig = builder.Configuration.GetSection(SmtpServerConfiguration.SectionName).Get<SmtpServerConfiguration>()
+                         ?? throw new InvalidOperationException($"Missing '{SmtpServerConfiguration.SectionName}' configuration section.");
 
-        // Add Aspire Azure Storage integration - these will use the connection strings provided by Aspire
+        // Minimal validation (storage connection comes from Aspire binding env vars)
+        if (smtpConfig.Ports is null || smtpConfig.Ports.Length == 0) throw new InvalidOperationException("SmtpServer:Ports required");
+        if (string.IsNullOrWhiteSpace(smtpConfig.BlobContainerName)) throw new InvalidOperationException("SmtpServer:BlobContainerName required");
+        if (string.IsNullOrWhiteSpace(smtpConfig.LogTableName)) throw new InvalidOperationException("SmtpServer:LogTableName required");
+
+        builder.Services.AddSingleton(smtpConfig);
+
+        // Register Azure clients from Aspire resource references (names must match AppHost: blobs, tables)
         builder.AddAzureBlobServiceClient("blobs");
         builder.AddAzureTableServiceClient("tables");
 
-        // Register custom logger provider for Table Storage
-        builder.Services.AddSingleton<TableStorageLoggerProvider>(provider =>
+        // Custom logger provider (table name comes from config)
+        builder.Services.AddSingleton<TableStorageLoggerProvider>(sp =>
         {
-            var tableServiceClient = provider.GetRequiredService<TableServiceClient>();
-            return new TableStorageLoggerProvider(tableServiceClient);
+            var tableServiceClient = sp.GetRequiredService<TableServiceClient>();
+            var cfg = sp.GetRequiredService<SmtpServerConfiguration>();
+            return new TableStorageLoggerProvider(tableServiceClient, cfg.LogTableName);
         });
 
-        // Register SMTP server components as SmtpServer interfaces
-        // The SmtpServer library uses a service-based architecture where core functionality
-        // is implemented through specific interfaces. We register both concrete implementations
-        // and their corresponding interfaces to enable dependency injection.
-        
-        // Message Store: Handles the storage and retrieval of incoming email messages
-        // SampleMessageStore implements IMessageStore to provide custom message handling logic
-        // This could store messages in Azure Blob Storage, databases, or other persistence layers
+        // SMTP components
         builder.Services.AddSingleton<SampleMessageStore>();
-        builder.Services.AddSingleton<IMessageStore>(provider => provider.GetRequiredService<SampleMessageStore>());
-        
-        // Mailbox Filter: Controls which email addresses are allowed to receive messages
-        // SampleMailboxFilter implements IMailboxFilter to validate recipient addresses
-        // This provides security by rejecting emails to unauthorized recipients
+        builder.Services.AddSingleton<IMessageStore>(sp => sp.GetRequiredService<SampleMessageStore>());
         builder.Services.AddSingleton<SampleMailboxFilter>();
-        builder.Services.AddSingleton<IMailboxFilter>(provider => provider.GetRequiredService<SampleMailboxFilter>());
-        
-        // User Authenticator: Handles SMTP authentication for clients sending emails
-        // SampleUserAuthenticator implements IUserAuthenticator to verify user credentials
-        // This ensures only authorized users can send emails through the SMTP server
+        builder.Services.AddSingleton<IMailboxFilter>(sp => sp.GetRequiredService<SampleMailboxFilter>());
         builder.Services.AddSingleton<SampleUserAuthenticator>();
-        builder.Services.AddSingleton<IUserAuthenticator>(provider => provider.GetRequiredService<SampleUserAuthenticator>());
-
-        // Register the hosted service
+        builder.Services.AddSingleton<IUserAuthenticator>(sp => sp.GetRequiredService<SampleUserAuthenticator>());
+        builder.Services.AddHostedService<StorageDiagnosticService>();
         builder.Services.AddHostedService<SmtpServerHostedService>();
 
-        // Build the host
         var host = builder.Build();
 
-        // Add custom table storage logging after the host is built
-        var serviceProvider = host.Services;
-        var loggerFactory = serviceProvider.GetRequiredService<ILoggerFactory>();
-        var tableStorageProvider = serviceProvider.GetRequiredService<TableStorageLoggerProvider>();
-        loggerFactory.AddProvider(tableStorageProvider);
-
+        var loggerFactory = host.Services.GetRequiredService<ILoggerFactory>();
+        loggerFactory.AddProvider(host.Services.GetRequiredService<TableStorageLoggerProvider>());
         var logger = host.Services.GetRequiredService<ILogger<Program>>();
-        
+
         try
         {
-            logger.LogInformation("Starting SMTP Server Application with Aspire");
-            logger.LogInformation("==========================================");
-            logger.LogInformation("SMTP Server Configuration:");
-            
-            var config = host.Services.GetRequiredService<SmtpServerConfiguration>();
-            logger.LogInformation("  Server Name: {ServerName}", config.ServerName);
-            logger.LogInformation("  Ports: {Ports}", string.Join(", ", config.Ports));
-            logger.LogInformation("  Allowed Recipient: {AllowedRecipient}", config.AllowedRecipient);
-            logger.LogInformation("  Allowed Username: {AllowedUsername}", config.AllowedUsername);
-            logger.LogInformation("  Blob Container: {BlobContainer}", config.BlobContainerName);
-            logger.LogInformation("  Log Table: {LogTable}", config.LogTableName);
-            logger.LogInformation("  Using Aspire-managed Azure Storage (Azurite in development)");
-            logger.LogInformation("==========================================");
+            logger.LogInformation("Starting SMTP Server (Aspire)");
+
+            // Dump resolved connection environment vars for diagnostics (sanitized)
+            foreach (var kv in Environment.GetEnvironmentVariables().Cast<DictionaryEntry>()
+                         .Where(e => e.Key is string s && (s.Contains("BLOB") || s.Contains("TABLE") || s.Contains("STORAGE") || s.Contains("AZURE"))) )
+            {
+                logger.LogDebug("Env {Key} => {Len} chars", kv.Key, kv.Value?.ToString()?.Length ?? 0);
+            }
+
+            // Test clients early with short timeout + custom retry to surface issues once (not 6x default)
+            var blobClient = host.Services.GetRequiredService<BlobServiceClient>();
+            var tableClient = host.Services.GetRequiredService<TableServiceClient>();
+
+            await TestBlobAsync(blobClient, smtpConfig.BlobContainerName, logger);
+            await TestTableAsync(tableClient, smtpConfig.LogTableName, logger);
 
             await host.RunAsync();
         }
         catch (Exception ex)
         {
-            logger.LogCritical(ex, "Application terminated unexpectedly");
+            logger.LogCritical(ex, "Fatal startup failure");
             throw;
         }
-        finally
+    }
+
+    private static async Task TestBlobAsync(BlobServiceClient blobServiceClient, string container, ILogger logger)
+    {
+        try
         {
-            logger.LogInformation("SMTP Server Application stopped");
+            logger.LogInformation("Blob Service URI: {Uri}", blobServiceClient.Uri);
+            var c = blobServiceClient.GetBlobContainerClient(container);
+            await c.CreateIfNotExistsAsync();
+            logger.LogInformation("Blob container '{Container}' ready", container);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Blob connectivity failed {Message}", ex.Message);
+        }
+    }
+
+    private static async Task TestTableAsync(TableServiceClient tableServiceClient, string tableName, ILogger logger)
+    {
+        try
+        {
+            logger.LogInformation("Table Service URI: {Uri}", tableServiceClient.Uri);
+            var t = tableServiceClient.GetTableClient(tableName);
+            await t.CreateIfNotExistsAsync();
+            logger.LogInformation("Table '{Table}' ready", tableName);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Table connectivity failed {Message}", ex.Message);
         }
     }
 }

@@ -1,21 +1,25 @@
 using Microsoft.Extensions.Logging;
 using SmtpServer;
 using SmtpServer.Authentication;
+using SMTPServerSvc.Configuration;
 
 namespace SMTPServerSvc.Services;
 
 /// <summary>
-/// User authenticator that only allows SMTP relay for user "Admin" with password "password"
+/// User authenticator that only allows SMTP relay for configured username and password
 /// </summary>
 public class SampleUserAuthenticator : IUserAuthenticator
 {
     private readonly ILogger<SampleUserAuthenticator> _logger;
-    private readonly string _allowedUsername = "Admin";
-    private readonly string _allowedPassword = "password";
+    private readonly string _allowedUsername;
+    private readonly string _allowedPassword;
 
-    public SampleUserAuthenticator(ILogger<SampleUserAuthenticator> logger)
+    public SampleUserAuthenticator(SmtpServerConfiguration configuration, ILogger<SampleUserAuthenticator> logger)
     {
         _logger = logger;
+        _allowedUsername = configuration.AllowedUsername;
+        _allowedPassword = configuration.AllowedPassword;
+        
         _logger.LogInformation("SampleUserAuthenticator initialized. Only allowing user: {AllowedUsername}", _allowedUsername);
     }
 

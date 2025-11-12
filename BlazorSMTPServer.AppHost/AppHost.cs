@@ -1,8 +1,12 @@
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+
 var builder = DistributedApplication.CreateBuilder(args);
 
 // Add Azurite storage emulator for development
+// This will automatically start Azurite container or use local installation
 var storage = builder.AddAzureStorage("storage")
-    .RunAsEmulator(); // This will use Azurite
+    .RunAsEmulator();
 
 // Add Blob storage resource
 var blobs = storage.AddBlobs("blobs");

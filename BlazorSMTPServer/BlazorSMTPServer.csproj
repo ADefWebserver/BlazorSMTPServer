@@ -11,4 +11,15 @@
     <ProjectReference Include="..\SMTPServerSvc\SMTPServerSvc.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Azure Blob client via Aspire -->
+    <PackageReference Include="Aspire.Azure.Storage.Blobs" Version="13.0.0" />
+    <!-- Direct SDK for advanced blob operations -->
+    <PackageReference Include="Azure.Storage.Blobs" Version="12.26.0" />
+    <!-- Blazorise core & Bootstrap provider (Outlook clone uses Blazorise) -->
+    <PackageReference Include="Blazorise" Version="1.5.2" />
+    <PackageReference Include="Blazorise.Bootstrap5" Version="1.5.2" />
+    <PackageReference Include="Blazorise.Icons.FontAwesome" Version="1.5.2" />
+  </ItemGroup>
+
 </Project>

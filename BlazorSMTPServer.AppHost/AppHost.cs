@@ -15,7 +15,9 @@ var blobs = storage.AddBlobs("blobs");
 var tables = storage.AddTables("tables");
 
 // Add the Blazor web application
-var blazorApp = builder.AddProject<Projects.BlazorSMTPServer>("blazorsmtpserver");
+var blazorApp = builder.AddProject<Projects.BlazorSMTPServer>("blazorsmtpserver")
+    // Allow the Blazor app to access the blob resource for reading messages
+    .WithReference(blobs);
 
 // Add the SMTP Server service with storage dependencies and expose SMTP ports
 var smtpServer = builder.AddProject<Projects.SMTPServerSvc>("smtpserversvc")

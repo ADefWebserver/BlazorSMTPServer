@@ -1,5 +1,7 @@
 using BlazorSMTPServer.Components;
 using SMTPServerSvc.TestClient;
+using Azure.Storage.Blobs;
+using BlazorSMTPServer.Services;
 
 namespace BlazorSMTPServer;
 
@@ -10,9 +12,15 @@ public class Program
         var builder = WebApplication.CreateBuilder(args);
         builder.AddServiceDefaults();
 
+        // Add Azure Blob Service client from Aspire resource reference ("blobs")
+        builder.AddAzureBlobServiceClient("blobs");
+
         // Add services to the container.
         builder.Services.AddRazorComponents()
             .AddInteractiveServerComponents();
+
+        // Register email service
+        builder.Services.AddScoped<BlobEmailService>();
 
         var app = builder.Build();
 

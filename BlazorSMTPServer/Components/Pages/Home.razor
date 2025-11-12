@@ -1,7 +1,168 @@
 ﻿@page "/"
+@using BlazorSMTPServer.Services
+@inject BlobEmailService EmailService
+@inject Microsoft.JSInterop.IJSRuntime JSRuntime
 
-<PageTitle>Home</PageTitle>
+<PageTitle>Inbox</PageTitle>
 
-<h1>Home</h1>
+<h3>Inbox Viewer (Azure Blob Storage)</h3>
 
-<p>Welcome. See the <a href="/features">Features</a> page for details about this demo.</p>
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-md-3">
+            <div class="card mb-3">
+                <div class="card-header"><strong>Recipients</strong></div>
+                <div class="card-body">
+                    @if (_recipientFolders is null)
+                    {
+                        <p><em>Loading folders...</em></p>
+                    }
+                    else if (_recipientFolders.Count == 0)
+                    {
+                        <p class="text-muted">No recipient folders found.</p>
+                    }
+                    else
+                    {
+                        <ul class="list-unstyled">
+                            @foreach (var folder in _recipientFolders)
+                            {
+                                <li class="mb-2">
+                                    <button class="btn btn-sm @(folder == _selectedRecipient ? "btn-primary" : "btn-light")" @onclick="() => SelectRecipient(folder)">
+                                        <span class="me-1">📧</span> @folder
+                                    </button>
+                                </li>
+                            }
+                        </ul>
+                    }
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card mb-3">
+                <div class="card-header"><strong>Messages</strong></div>
+                <div class="card-body">
+                    @if (_isLoadingMessages)
+                    {
+                        <p><em>Loading messages...</em></p>
+                    }
+                    else if (_messages is null || _messages.Count == 0)
+                    {
+                        <p class="text-muted">No messages.</p>
+                    }
+                    else
+                    {
+                        <div class="list-group" style="max-height:70vh;overflow-y:auto;">
+                            @foreach (var m in _messages)
+                            {
+                                var active = m.Id == _selectedMessageId ? "active" : string.Empty;
+                                <a href="#" class="list-group-item list-group-item-action @active" @onclick="() => OpenMessage(m.Id)">
+                                    <div class="d-flex w-100 justify-content-between">
+                                        <h6 class="mb-1 text-truncate" title="@m.Subject">@m.Subject</h6>
+                                        <small>@m.Received.ToLocalTime().ToString("HH:mm")</small>
+                                    </div>
+                                    <small class="text-muted">From: @m.From</small><br />
+                                    <small class="text-muted">Size: @m.Size bytes</small>
+                                </a>
+                            }
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+        <div class="col-md-5">
+            <div class="card mb-3">
+                <div class="card-header">
+                    <strong>Preview</strong>
+                    @if (_currentEmail is not null)
+                    {
+                        <button class="btn btn-sm btn-secondary float-end" @onclick="DownloadCurrent">Download .eml</button>
+                    }
+                </div>
+                <div class="card-body">
+                    @if (_isLoadingContent)
+                    {
+                        <p><em>Loading content...</em></p>
+                    }
+                    else if (_currentEmail is null)
+                    {
+                        <p class="text-muted">Select a message to view its raw EML content.</p>
+                    }
+                    else
+                    {
+                        <p><strong>Subject:</strong> @_currentEmail.Metadata.Subject</p>
+                        <p><strong>From:</strong> @_currentEmail.Metadata.From</p>
+                        <p><strong>Received:</strong> @_currentEmail.Metadata.Received.ToLocalTime()</p>
+                        <p><strong>Recipient User:</strong> @_currentEmail.Metadata.RecipientUser</p>
+                        <hr />
+                        <pre style="white-space:pre-wrap;max-height:60vh;overflow-y:auto;">@_currentEmail.RawEml</pre>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private List<string>? _recipientFolders;
+    private string? _selectedRecipient;
+    private List<EmailListItem>? _messages;
+    private EmailMessage? _currentEmail;
+    private string? _selectedMessageId;
+    private bool _isLoadingMessages;
+    private bool _isLoadingContent;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _recipientFolders = (await EmailService.GetRecipientFoldersAsync()).ToList();
+        if (_recipientFolders.Count == 1)
+        {
+            SelectRecipient(_recipientFolders[0]);
+        }
+    }
+
+    private async void SelectRecipient(string folder)
+    {
+        _selectedRecipient = folder;
+        _messages = null;
+        _currentEmail = null;
+        _selectedMessageId = null;
+        _isLoadingMessages = true;
+        StateHasChanged();
+        try
+        {
+            _messages = (await EmailService.ListEmailsAsync(folder)).ToList();
+        }
+        finally
+        {
+            _isLoadingMessages = false;
+            StateHasChanged();
+        }
+    }
+
+    private async void OpenMessage(string id)
+    {
+        _selectedMessageId = id;
+        _currentEmail = null;
+        _isLoadingContent = true;
+        StateHasChanged();
+        try
+        {
+            _currentEmail = await EmailService.GetEmailAsync(id);
+        }
+        finally
+        {
+            _isLoadingContent = false;
+            StateHasChanged();
+        }
+    }
+
+    private void DownloadCurrent()
+    {
+        if (_currentEmail is null) return;
+        var bytes = System.Text.Encoding.UTF8.GetBytes(_currentEmail.RawEml);
+        var base64 = Convert.ToBase64String(bytes);
+        var fileName = _currentEmail.Metadata.BlobName.Split('/').Last();
+        var url = $"data:text/plain;base64,{base64}";
+        JSRuntime.InvokeVoidAsync("eval", $"(function(){{var a=document.createElement('a');a.href='{url}';a.download='{fileName}';a.click();}})();");
+    }
+}

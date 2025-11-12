@@ -49,7 +49,6 @@ internal class Program
         builder.Services.AddSingleton<IMailboxFilter>(sp => sp.GetRequiredService<SampleMailboxFilter>());
         builder.Services.AddSingleton<SampleUserAuthenticator>();
         builder.Services.AddSingleton<IUserAuthenticator>(sp => sp.GetRequiredService<SampleUserAuthenticator>());
-        builder.Services.AddHostedService<StorageDiagnosticService>();
         builder.Services.AddHostedService<SmtpServerHostedService>();
 
         var host = builder.Build();

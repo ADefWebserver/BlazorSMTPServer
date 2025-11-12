@@ -6,6 +6,7 @@ using SmtpServer.Storage;
 using System.Buffers;
 using System.Text;
 using SMTPServerSvc.Configuration;
+using System.Linq;
 
 namespace SMTPServerSvc.Services;
 
@@ -14,8 +15,9 @@ namespace SMTPServerSvc.Services;
 /// </summary>
 public class SampleMessageStore : MessageStore
 {
-    private readonly BlobServiceClient _blobServiceClient;
-    private readonly BlobContainerClient _containerClient;
+    // Fix: Mark fields as nullable to resolve CS8618
+    private readonly BlobServiceClient? _blobServiceClient;
+    private readonly BlobContainerClient? _containerClient;
     private readonly ILogger<SampleMessageStore> _logger;
     private readonly string _containerName;
     private readonly bool _isAvailable;
@@ -75,9 +77,41 @@ public class SampleMessageStore : MessageStore
                 return SmtpResponse.Ok; // Still return OK to not break SMTP flow
             }
 
+            // Determine recipient user folder (first recipient)
+            string recipientUser = "unknown";
+            try
+            {
+                var firstTo = transaction.To?.OfType<SmtpServer.Mail.IMailbox>().FirstOrDefault();
+                recipientUser = firstTo?.User ?? "unknown";
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Unable to extract recipient user from transaction; defaulting to 'unknown'.");
+            }
+
+            // Sanitize recipient for use as a blob virtual folder
+            string recipientFolder = SanitizeForBlobPath(recipientUser);
+
+            // Ensure a per-user folder (virtual) by creating a placeholder blob if it doesn't exist
+            var keepBlob = _containerClient.GetBlobClient($"{recipientFolder}/.keep");
+            try
+            {
+                if (!await keepBlob.ExistsAsync(cancellationToken))
+                {
+                    using var empty = new MemoryStream(Array.Empty<byte>());
+                    await keepBlob.UploadAsync(empty, cancellationToken: cancellationToken);
+                }
+            }
+            catch (Exception ex)
+            {
+                // Non-fatal; continue with message upload
+                _logger.LogDebug(ex, "Failed to ensure placeholder for folder {Folder}", recipientFolder);
+            }
+
             // Generate unique blob name with timestamp
             var timestamp = DateTime.UtcNow.ToString("yyyy-MM-dd_HH-mm-ss-fff");
             var blobName = $"{timestamp}_{sessionId}_{Guid.NewGuid():N}.eml";
+            var blobPath = $"{recipientFolder}/{blobName}";
 
             // Convert buffer to string for storage
             var messageContent = Encoding.UTF8.GetString(buffer.ToArray());
@@ -87,14 +121,15 @@ public class SampleMessageStore : MessageStore
             enhancedContent.AppendLine($"X-SMTP-Server-Received: {DateTime.UtcNow:R}");
             enhancedContent.AppendLine($"X-SMTP-Server-Session: {sessionId}");
             enhancedContent.AppendLine($"X-SMTP-Server-Transaction: {transactionId}");
-            enhancedContent.AppendLine($"X-SMTP-Server-BlobName: {blobName}");
+            enhancedContent.AppendLine($"X-SMTP-Server-BlobName: {blobPath}");
+            enhancedContent.AppendLine($"X-SMTP-Server-Recipient-User: {recipientUser}");
             
             // Add original message content
             enhancedContent.AppendLine();
             enhancedContent.Append(messageContent);
 
-            // Upload to blob storage
-            var blobClient = _containerClient.GetBlobClient(blobName);
+            // Upload to blob storage under the per-user folder
+            var blobClient = _containerClient.GetBlobClient(blobPath);
             
             using var stream = new MemoryStream(Encoding.UTF8.GetBytes(enhancedContent.ToString()));
             await blobClient.UploadAsync(stream, overwrite: true, cancellationToken);
@@ -106,13 +141,14 @@ public class SampleMessageStore : MessageStore
                 ["TransactionId"] = transactionId,
                 ["ReceivedAt"] = DateTime.UtcNow.ToString("O"),
                 ["MessageSize"] = buffer.Length.ToString(),
-                ["ContainerName"] = _containerName
+                ["ContainerName"] = _containerName,
+                ["RecipientUser"] = recipientUser
             };
 
             await blobClient.SetMetadataAsync(metadata, cancellationToken: cancellationToken);
 
             _logger.LogInformation("Message saved successfully to blob {BlobName} in container {ContainerName}, size {MessageSize} bytes", 
-                blobName, _containerName, buffer.Length);
+                blobPath, _containerName, buffer.Length);
 
             return SmtpResponse.Ok;
         }
@@ -133,5 +169,28 @@ public class SampleMessageStore : MessageStore
             
             return SmtpResponse.Ok; // Return OK to not break SMTP flow, even if storage fails
         }
+    }
+
+    private static string SanitizeForBlobPath(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return "unknown";
+        }
+
+        var builder = new StringBuilder(value.Length);
+        foreach (var ch in value)
+        {
+            if (char.IsLetterOrDigit(ch) || ch == '.' || ch == '-' || ch == '_')
+            {
+                builder.Append(ch);
+            }
+            else
+            {
+                builder.Append('_');
+            }
+        }
+        var result = builder.ToString().Trim();
+        return string.IsNullOrEmpty(result) ? "unknown" : result;
     }
 }

@@ -1,7 +1,11 @@
 @page "/settings"
 @using Azure.Data.Tables
+@using System.Text.Json
+@using System.Text.Json.Nodes
 @inject TableServiceClient Tables
 @inject ILogger<SmtpSettings> Log
+@inject IConfiguration Config
+@inject IWebHostEnvironment Env
 
 <div class="container py-4">
     <div class="row justify-content-center">
@@ -78,7 +82,7 @@
                                         <input id="appPassword" class="form-control" autocomplete="new-password" type="@(ShowPasswords ? "text" : "password")" placeholder="Leave blank to disable app auth" @bind="AppPassword" />
                                         <button class="btn btn-outline-secondary" type="button" @onclick="() => ShowPasswords = !ShowPasswords">@(ShowPasswords ? "Hide" : "Show")</button>
                                     </div>
-                                    <div class="form-text">Protects access to this UI. Blank means open access.</div>
+                                    <div class="form-text">Protects access to this UI. Blank means open access. (Stored in appsettings.json)</div>
                                 </div>
                             </div>
 
@@ -104,7 +108,6 @@
     const string TableName = "SMTPSettings"; 
     const string PK = "SmtpServer";
     const string RKSettings = "Current";
-    const string RKAppPwd = "AppPassword";
 
     string? ServerName; string? Ports; string? AllowedRecipient; string? AllowedUsername; string? AllowedPassword; string? BlobContainerName; string? LogTableName; string? AppPassword;
     bool Saved; string? Error;
@@ -134,8 +137,8 @@
                 BlobContainerName = settings.Value.GetString("BlobContainerName");
                 LogTableName = settings.Value.GetString("LogTableName");
             }
-            var pwd = await table.GetEntityIfExistsAsync<TableEntity>(PK, RKAppPwd);
-            if (pwd.HasValue) AppPassword = pwd.Value.GetString("Password");
+            // Load app password from configuration
+            AppPassword = Config["AppPassword"];
         }
         catch (Exception ex) { Error = ex.Message; Log.LogError(ex, "Load failed"); }
         finally { IsLoading = false; }
@@ -164,11 +167,38 @@
                 {"LogTableName", LogTableName ?? string.Empty}
             };
             await table.UpsertEntityAsync(entity);
-            var pwdEntity = new TableEntity(PK, RKAppPwd) { {"Password", AppPassword ?? string.Empty} };
-            await table.UpsertEntityAsync(pwdEntity);
+
+            // Persist app password to appsettings.json
+            await SaveAppPasswordToAppSettingsAsync(AppPassword ?? string.Empty);
+
             Saved = true;
         }
         catch (Exception ex) { Error = ex.Message; Log.LogError(ex, "Save failed"); }
         finally { Saving = false; }
+    }
+
+    async Task SaveAppPasswordToAppSettingsAsync(string value)
+    {
+        var path = Path.Combine(Env.ContentRootPath, "appsettings.json");
+        JsonObject root;
+        try
+        {
+            if (File.Exists(path))
+            {
+                var json = await File.ReadAllTextAsync(path);
+                root = JsonNode.Parse(json) as JsonObject ?? new JsonObject();
+            }
+            else
+            {
+                root = new JsonObject();
+            }
+        }
+        catch
+        {
+            root = new JsonObject();
+        }
+        root["AppPassword"] = value;
+        var options = new JsonSerializerOptions { WriteIndented = true };
+        await File.WriteAllTextAsync(path, root.ToJsonString(options));
     }
 }

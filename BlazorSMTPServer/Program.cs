@@ -18,7 +18,7 @@ public class Program
 
         // Add Azure Blob Service client from Aspire resource reference ("blobs")
         builder.AddAzureBlobServiceClient("blobs");
-        // Add Azure Table Service client for settings and password storage
+        // Add Azure Table Service client for settings storage (not used for app password anymore)
         builder.AddAzureTableServiceClient("tables");
 
         // Add services to the container.
@@ -28,7 +28,7 @@ public class Program
         // Register email service
         builder.Services.AddScoped<BlobEmailService>();
 
-        // Simple password gate middleware using table storage value (table: SMPTSettings pk:SmtpServer rk:AppPassword)
+        // Simple password gate middleware now uses appsettings.json value
         builder.Services.AddSingleton<AppPasswordValidator>();
 
         // Add required distributed cache for session + session services
@@ -128,35 +128,17 @@ public class Program
 
 public class AppPasswordValidator
 {
-    private readonly TableServiceClient _tableServiceClient;
-    private const string TableName = "SMPTSettings";
-    private const string PartitionKey = "SmtpServer";
-    private const string RowKey = "AppPassword";
-    private string? _cached;
-    private DateTime _cachedAt;
-    private readonly TimeSpan _cacheDuration = TimeSpan.FromMinutes(2);
+    private readonly IConfiguration _configuration;
 
-    public AppPasswordValidator(TableServiceClient tableServiceClient)
+    public AppPasswordValidator(IConfiguration configuration)
     {
-        _tableServiceClient = tableServiceClient;
+        _configuration = configuration;
     }
 
-    public async Task<string?> GetPasswordAsync()
+    public Task<string?> GetPasswordAsync()
     {
-        if (_cached != null && DateTime.UtcNow - _cachedAt < _cacheDuration)
-            return _cached;
-        try
-        {
-            var table = _tableServiceClient.GetTableClient(TableName);
-            await table.CreateIfNotExistsAsync();
-            var entity = await table.GetEntityIfExistsAsync<TableEntity>(PartitionKey, RowKey);
-            _cached = entity.HasValue ? entity.Value.GetString("Password") : null;
-            _cachedAt = DateTime.UtcNow;
-            return _cached;
-        }
-        catch
-        {
-            return null; // treat as open access if problem
-        }
+        // Read from appsettings.json (supports reloadOnChange)
+        var pwd = _configuration["AppPassword"];
+        return Task.FromResult<string?>(pwd);
     }
 }

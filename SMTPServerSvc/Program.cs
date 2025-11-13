@@ -25,7 +25,7 @@ internal class Program
         builder.AddAzureBlobServiceClient("blobs");
         builder.AddAzureTableServiceClient("tables");
 
-        // Attempt to load settings from Azure Table 'SMPTSettings'
+        // Attempt to load settings from Azure Table 'SMTPSettings'
         // Use a provisional TableServiceClient (Aspire will also provide one later for DI)
         var provisionalTableClient = new TableServiceClient("UseDevelopmentStorage=true");
         var settingsLoader = new TableSettingsLoader(provisionalTableClient, null);
@@ -34,7 +34,7 @@ internal class Program
         {
             var tempLoggerFactory = LoggerFactory.Create(lb => lb.AddConsole());
             var tempLogger = tempLoggerFactory.CreateLogger<Program>();
-            tempLogger.LogError("SMTP settings missing or incomplete in table 'SMPTSettings'. Service will stop.");
+            tempLogger.LogError("SMTP settings missing or incomplete in table 'SMTPSettings'. Service will stop.");
             return; // Stop service
         }
 
@@ -132,7 +132,7 @@ public class TableSettingsLoader
 {
     private readonly TableServiceClient _tableServiceClient;
     private readonly ILogger? _logger;
-    private const string TableName = "SMPTSettings"; // requested spelling
+    private const string TableName = "SMTPSettings"; 
     private const string PartitionKey = "SmtpServer";
     private const string RowKey = "Current";
 

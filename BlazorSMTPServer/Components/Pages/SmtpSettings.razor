@@ -3,28 +3,102 @@
 @inject TableServiceClient Tables
 @inject ILogger<SmtpSettings> Log
 
-<h1>SMTP Settings</h1>
+<div class="container py-4">
+    <div class="row justify-content-center">
+        <div class="col-12 col-lg-10">
+            <div class="card shadow-sm">
+                <div class="card-header">
+                    <h1 class="h4 mb-0">SMTP Settings</h1>
+                </div>
+                <div class="card-body">
+                    @if (!string.IsNullOrEmpty(Error))
+                    {
+                        <div class="alert alert-danger" role="alert">@Error</div>
+                    }
+                    @if (Saved)
+                    {
+                        <div class="alert alert-success" role="alert">Saved.</div>
+                    }
 
-@if (!string.IsNullOrEmpty(Error))
-{
-    <div class="alert alert-danger">@Error</div>
-}
-@if (Saved)
-{
-    <div class="alert alert-success">Saved.</div>
-}
+                    @if (IsLoading)
+                    {
+                        <div class="d-flex align-items-center gap-2 text-muted">
+                            <div class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></div>
+                            <span>Loading settings…</span>
+                        </div>
+                    }
+                    else
+                    {
+                        <form @onsubmit="SaveAsync" @onsubmit:preventDefault="true">
+                            <div class="row g-3">
+                                <div class="col-12 col-md-6">
+                                    <label class="form-label" for="serverName">Server Name</label>
+                                    <input id="serverName" class="form-control" type="text" placeholder="smtp.example.com" @bind="ServerName" />
+                                    <div class="form-text">Hostname for the SMTP listener.</div>
+                                </div>
+                                <div class="col-12 col-md-6">
+                                    <label class="form-label" for="ports">Ports</label>
+                                    <input id="ports" class="form-control" type="text" placeholder="25, 587" @bind="Ports" />
+                                    <div class="form-text">Comma-separated list of ports to listen on.</div>
+                                </div>
 
-<form @onsubmit="SaveAsync">
-    <input placeholder="Server Name" @bind="ServerName" /> <br />
-    <input placeholder="Ports (comma separated)" @bind="Ports" /> <br />
-    <input placeholder="Allowed Recipient" @bind="AllowedRecipient" /> <br />
-    <input placeholder="Allowed Username" @bind="AllowedUsername" /> <br />
-    <input type="password" placeholder="Allowed Password" @bind="AllowedPassword" /> <br />
-    <input placeholder="Blob Container Name" @bind="BlobContainerName" /> <br />
-    <input placeholder="Log Table Name" @bind="LogTableName" /> <br />
-    <input type="password" placeholder="App Access Password (blank=open)" @bind="AppPassword" /> <br />
-    <button type="submit">Save</button>
-</form>
+                                <div class="col-12 col-md-6">
+                                    <label class="form-label" for="allowedRecipient">Allowed Recipient</label>
+                                    <input id="allowedRecipient" class="form-control" type="email" placeholder="user@example.com" @bind="AllowedRecipient" />
+                                    <div class="form-text">Only accept mail where this is the recipient.</div>
+                                </div>
+                                <div class="col-12 col-md-6">
+                                    <label class="form-label" for="allowedUsername">Allowed Username</label>
+                                    <input id="allowedUsername" class="form-control" type="text" placeholder="username" @bind="AllowedUsername" />
+                                    <div class="form-text">SMTP auth username.</div>
+                                </div>
+                                <div class="col-12 col-md-6">
+                                    <label class="form-label" for="allowedPassword">Allowed Password</label>
+                                    <div class="input-group">
+                                        <input id="allowedPassword" class="form-control" autocomplete="new-password" type="@(ShowPasswords ? "text" : "password")" placeholder="Password" @bind="AllowedPassword" />
+                                        <button class="btn btn-outline-secondary" type="button" @onclick="() => ShowPasswords = !ShowPasswords">@(ShowPasswords ? "Hide" : "Show")</button>
+                                    </div>
+                                    <div class="form-text">SMTP auth password.</div>
+                                </div>
+
+                                <div class="col-12 col-md-6">
+                                    <label class="form-label" for="blobContainerName">Blob Container Name</label>
+                                    <input id="blobContainerName" class="form-control" type="text" placeholder="emails" @bind="BlobContainerName" />
+                                    <div class="form-text">Container for storing received messages.</div>
+                                </div>
+                                <div class="col-12 col-md-6">
+                                    <label class="form-label" for="logTableName">Log Table Name</label>
+                                    <input id="logTableName" class="form-control" type="text" placeholder="emaillogs" @bind="LogTableName" />
+                                    <div class="form-text">Azure Table to store logs.</div>
+                                </div>
+
+                                <div class="col-12 col-md-6">
+                                    <label class="form-label" for="appPassword">App Access Password</label>
+                                    <div class="input-group">
+                                        <input id="appPassword" class="form-control" autocomplete="new-password" type="@(ShowPasswords ? "text" : "password")" placeholder="Leave blank to disable app auth" @bind="AppPassword" />
+                                        <button class="btn btn-outline-secondary" type="button" @onclick="() => ShowPasswords = !ShowPasswords">@(ShowPasswords ? "Hide" : "Show")</button>
+                                    </div>
+                                    <div class="form-text">Protects access to this UI. Blank means open access.</div>
+                                </div>
+                            </div>
+
+                            <div class="d-flex align-items-center gap-2 mt-4">
+                                <button type="submit" class="btn btn-primary" disabled="@(Saving || IsLoading)">
+                                    @if (Saving)
+                                    {
+                                        <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                                    }
+                                    Save
+                                </button>
+                                <button type="button" class="btn btn-outline-secondary" @onclick="ResetAsync" disabled="@(Saving || IsLoading)">Reset</button>
+                            </div>
+                        </form>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
 
 @code {
     const string TableName = "SMPTSettings"; // requested spelling
@@ -35,8 +109,16 @@
     string? ServerName; string? Ports; string? AllowedRecipient; string? AllowedUsername; string? AllowedPassword; string? BlobContainerName; string? LogTableName; string? AppPassword;
     bool Saved; string? Error;
 
+    bool IsLoading; bool Saving; bool ShowPasswords;
+
     protected override async Task OnInitializedAsync()
     {
+        await LoadAsync();
+    }
+
+    async Task LoadAsync()
+    {
+        IsLoading = true; Error = null; Saved = false;
         try
         {
             var table = Tables.GetTableClient(TableName);
@@ -56,11 +138,17 @@
             if (pwd.HasValue) AppPassword = pwd.Value.GetString("Password");
         }
         catch (Exception ex) { Error = ex.Message; Log.LogError(ex, "Load failed"); }
+        finally { IsLoading = false; }
+    }
+
+    async Task ResetAsync()
+    {
+        await LoadAsync();
     }
 
     async Task SaveAsync()
     {
-        Error = null; Saved = false;
+        Error = null; Saved = false; Saving = true;
         try
         {
             var table = Tables.GetTableClient(TableName);
@@ -81,5 +169,6 @@
             Saved = true;
         }
         catch (Exception ex) { Error = ex.Message; Log.LogError(ex, "Save failed"); }
+        finally { Saving = false; }
     }
 }

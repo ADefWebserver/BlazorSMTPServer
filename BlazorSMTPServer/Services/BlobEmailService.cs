@@ -31,7 +31,7 @@ public class BlobEmailService
 {
     private readonly BlobServiceClient _blobServiceClient;
     private readonly ILogger<BlobEmailService> _logger;
-    private readonly string _containerName;
+    private readonly string? _containerName;
     private BlobContainerClient? _containerClient;
     private bool _containerEnsured;
 
@@ -39,14 +39,24 @@ public class BlobEmailService
     {
         _blobServiceClient = blobServiceClient;
         _logger = logger;
-        // Prefer app config, then env var from SMTP service, then default
-        _containerName = configuration["EmailClient:BlobContainerName"]
-                          ?? Environment.GetEnvironmentVariable("SmtpServer__BlobContainerName")
-                          ?? "email-messages";
+
+        // Resolve container name from configuration with sensible fallbacks.
+        // Allows app to run without hard-failing when not configured yet.
+        _containerName =
+            configuration["EmailStorage:Container"]
+            ?? configuration["BlobContainerName"]
+            ?? configuration["AzureStorage:ContainerName"]
+            ?? configuration["Storage:ContainerName"]
+            ?? "emails"; // default container name
     }
 
     private async Task<BlobContainerClient> GetOrCreateContainerAsync(CancellationToken ct)
     {
+        if (string.IsNullOrWhiteSpace(_containerName))
+        {
+            throw new InvalidOperationException("Blob container name is not configured.");
+        }
+
         _containerClient ??= _blobServiceClient.GetBlobContainerClient(_containerName);
         if (!_containerEnsured)
         {
@@ -68,6 +78,12 @@ public class BlobEmailService
         var results = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         try
         {
+            if (string.IsNullOrWhiteSpace(_containerName))
+            {
+                _logger.LogInformation("Blob container name not configured. Returning empty list.");
+                return Array.Empty<string>();
+            }
+
             var container = await GetOrCreateContainerAsync(ct);
             await foreach (var blob in container.GetBlobsAsync(prefix: null, cancellationToken: ct))
             {
@@ -86,6 +102,15 @@ public class BlobEmailService
             // Container missing; return empty and log once
             _logger.LogInformation("Blob container '{Container}' not found yet. Returning empty list.", _containerName);
         }
+        catch (RequestFailedException ex)
+        {
+            // Any other storage issues (auth, DNS, etc.): log and return empty
+            _logger.LogWarning(ex, "Listing recipient folders failed for container '{Container}'. Returning empty list.", _containerName);
+        }
+        catch (InvalidOperationException)
+        {
+            // Configuration missing; already logged above
+        }
         return results.OrderBy(s => s).ToList();
     }
 
@@ -94,6 +119,12 @@ public class BlobEmailService
         var items = new List<EmailListItem>();
         try
         {
+            if (string.IsNullOrWhiteSpace(_containerName))
+            {
+                _logger.LogInformation("Blob container name not configured. Returning empty messages.");
+                return items;
+            }
+
             var container = await GetOrCreateContainerAsync(ct);
             var prefix = string.IsNullOrWhiteSpace(recipientFolder) ? null : recipientFolder.Trim('/') + "/";
 
@@ -114,13 +145,21 @@ public class BlobEmailService
                     RecipientUser: metaRecipient ?? "",
                     Size: size,
                     BlobName: blob.Name,
-                    Container: _containerName
+                    Container: _containerName ?? string.Empty
                 ));
             }
         }
         catch (RequestFailedException ex) when (ex.ErrorCode == BlobErrorCode.ContainerNotFound)
         {
             _logger.LogInformation("Blob container '{Container}' not found yet. Returning empty list.", _containerName);
+        }
+        catch (RequestFailedException ex)
+        {
+            _logger.LogWarning(ex, "Listing emails failed for container '{Container}'. Returning empty list.", _containerName);
+        }
+        catch (InvalidOperationException)
+        {
+            // Configuration missing; already logged above
         }
         return items.OrderByDescending(i => i.Received).ToList();
     }
@@ -129,6 +168,12 @@ public class BlobEmailService
     {
         try
         {
+            if (string.IsNullOrWhiteSpace(_containerName))
+            {
+                _logger.LogInformation("Blob container name not configured. Returning null email.");
+                return null;
+            }
+
             var container = await GetOrCreateContainerAsync(ct);
             var blob = container.GetBlobClient(blobName);
             if (!await blob.ExistsAsync(ct))
@@ -160,7 +205,7 @@ public class BlobEmailService
                 RecipientUser: recipient,
                 Size: size,
                 BlobName: blobName,
-                Container: _containerName
+                Container: _containerName ?? string.Empty
             );
 
             return new EmailMessage(item, raw);
@@ -168,6 +213,16 @@ public class BlobEmailService
         catch (RequestFailedException ex) when (ex.ErrorCode == BlobErrorCode.ContainerNotFound)
         {
             _logger.LogWarning("Blob container '{Container}' not found when fetching blob {Blob}.", _containerName, blobName);
+            return null;
+        }
+        catch (RequestFailedException ex)
+        {
+            _logger.LogWarning(ex, "Fetching blob '{Blob}' failed for container '{Container}'. Returning null.", blobName, _containerName);
+            return null;
+        }
+        catch (InvalidOperationException)
+        {
+            // Configuration missing; already logged above
             return null;
         }
     }

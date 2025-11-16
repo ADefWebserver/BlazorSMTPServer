@@ -18,7 +18,7 @@ public class Program
 
         // Add Azure Blob Service client from Aspire resource reference ("blobs")
         builder.AddAzureBlobServiceClient("blobs");
-        // Add Azure Table Service client for settings storage (not used for app password anymore)
+        // Add Azure Table Service client for settings storage 
         builder.AddAzureTableServiceClient("tables");
 
         // Add services to the container.

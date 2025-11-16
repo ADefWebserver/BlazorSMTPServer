@@ -1,106 +1,101 @@
 ﻿@page "/"
 @using BlazorSMTPServer.Services
+@using Azure.Data.Tables
+@using BlazorSMTPServer.Components.Dialogs
 @inject BlobEmailService EmailService
 @inject Microsoft.JSInterop.IJSRuntime JSRuntime
+@inject Radzen.DialogService DialogService
+@inject TableServiceClient TableServiceClient
 
 <PageTitle>Inbox</PageTitle>
 
-<h3>Inbox Viewer (Azure Blob Storage)</h3>
+<!-- Two-column mail layout -->
+<RadzenRow Style="height:calc(100vh - 40px);">
+    <!-- Left column: compose + recipient + messages -->
+    <RadzenColumn Size="3" Style="height:100%; display:flex; flex-direction:column; gap:10px;">
+        <RadzenButton Text="New message" Icon="play_arrow" ButtonStyle="ButtonStyle.Success" Style="width:100%;" Click="@NewMessageClick" />
 
-<div class="container-fluid">
-    <div class="row">
-        <div class="col-md-3">
-            <div class="card mb-3">
-                <div class="card-header"><strong>Recipients</strong></div>
-                <div class="card-body">
-                    @if (_recipientFolders is null)
-                    {
-                        <p><em>Loading folders...</em></p>
-                    }
-                    else if (_recipientFolders.Count == 0)
-                    {
-                        <p class="text-muted">No recipient folders found.</p>
-                    }
-                    else
-                    {
-                        <ul class="list-unstyled">
-                            @foreach (var folder in _recipientFolders)
-                            {
-                                <li class="mb-2">
-                                    <button class="btn btn-sm @(folder == _selectedRecipient ? "btn-primary" : "btn-light")" @onclick="() => SelectRecipient(folder)">
-                                        <span class="me-1">📧</span> @folder
-                                    </button>
-                                </li>
-                            }
-                        </ul>
-                    }
-                </div>
-            </div>
-        </div>
-        <div class="col-md-4">
-            <div class="card mb-3">
-                <div class="card-header"><strong>Messages</strong></div>
-                <div class="card-body">
-                    @if (_isLoadingMessages)
-                    {
-                        <p><em>Loading messages...</em></p>
-                    }
-                    else if (_messages is null || _messages.Count == 0)
-                    {
-                        <p class="text-muted">No messages.</p>
-                    }
-                    else
-                    {
-                        <div class="list-group" style="max-height:70vh;overflow-y:auto;">
-                            @foreach (var m in _messages)
-                            {
-                                var active = m.Id == _selectedMessageId ? "active" : string.Empty;
-                                <a href="#" class="list-group-item list-group-item-action @active" @onclick="() => OpenMessage(m.Id)">
-                                    <div class="d-flex w-100 justify-content-between">
-                                        <h6 class="mb-1 text-truncate" title="@m.Subject">@m.Subject</h6>
-                                        <small>@m.Received.ToLocalTime().ToString("HH:mm")</small>
-                                    </div>
-                                    <small class="text-muted">From: @m.From</small><br />
-                                    <small class="text-muted">Size: @m.Size bytes</small>
-                                </a>
-                            }
+        <!-- Recipient list -->
+        <div style="display:flex; flex-direction:column; flex:1 1 auto; min-height:0;">
+            @if (_recipientFolders is null)
+            {
+                <div class="rz-p-2"><em>Loading folders...</em></div>
+            }
+            else if (_recipientFolders.Count == 0)
+            {
+                <div class="rz-p-2 text-muted">No recipient folders found.</div>
+            }
+            else
+            {
+                <RadzenListBox Data="@_recipientFolders"
+                               @bind-Value="_selectedRecipient"
+                               Change="@OnRecipientChanged"
+                               Style="margin-bottom:10px;" Filterable="false">
+                    <Template Context="folder">
+                        <div class="rz-d-flex rz-align-items-center">
+                            <RadzenIcon Icon="mail" Class="rz-mr-2" />
+                            <span>@folder</span>
                         </div>
-                    }
-                </div>
-            </div>
+                    </Template>
+                </RadzenListBox>
+
+                <!-- Messages list -->
+                @if (_isLoadingMessages)
+                {
+                    <div class="rz-p-2"><em>Loading messages...</em></div>
+                }
+                else if (_messages is null || _messages.Count == 0)
+                {
+                    <div class="rz-p-2 rz-text-muted" style="text-align:center;">Empty list.</div>
+                }
+                else
+                {
+                    <RadzenListBox Data="@_messages" ValueProperty="Id" @bind-Value="_selectedMessageId" Change="@OnMessageChanged"
+                                   Style="flex:1 1 auto; min-height:0; overflow:auto;">
+                        <Template Context="m">
+                            <div style="padding:4px 4px;">
+                                <div style="font-weight:600;" class="rz-truncate" title="@DisplaySubject(m.Subject)">@DisplaySubject(m.Subject)</div>
+                                <small class="rz-text-secondary">From:</small><br />
+                            </div>
+                        </Template>
+                    </RadzenListBox>
+                }
+            }
         </div>
-        <div class="col-md-5">
-            <div class="card mb-3">
-                <div class="card-header">
-                    <strong>Preview</strong>
-                    @if (_currentEmail is not null)
-                    {
-                        <button class="btn btn-sm btn-secondary float-end" @onclick="DownloadCurrent">Download .eml</button>
-                    }
-                </div>
-                <div class="card-body">
-                    @if (_isLoadingContent)
-                    {
-                        <p><em>Loading content...</em></p>
-                    }
-                    else if (_currentEmail is null)
-                    {
-                        <p class="text-muted">Select a message to view its raw EML content.</p>
-                    }
-                    else
-                    {
-                        <p><strong>Subject:</strong> @_currentEmail.Metadata.Subject</p>
-                        <p><strong>From:</strong> @_currentEmail.Metadata.From</p>
-                        <p><strong>Received:</strong> @_currentEmail.Metadata.Received.ToLocalTime()</p>
-                        <p><strong>Recipient User:</strong> @_currentEmail.Metadata.RecipientUser</p>
-                        <hr />
-                        <pre style="white-space:pre-wrap;max-height:60vh;overflow-y:auto;">@_currentEmail.RawEml</pre>
-                    }
-                </div>
-            </div>
+    </RadzenColumn>
+
+    <!-- Right column: preview -->
+    <RadzenColumn Size="9" Style="height:100%; min-width:0; display:flex; flex-direction:column;">
+        <!-- Download button row (search removed) -->
+        <div class="rz-d-flex rz-align-items-center" style="gap:12px; padding:4px 0;">
+            @if (_currentEmail is not null)
+            {
+                <RadzenButton Text="Download .eml" Icon="download" ButtonStyle="ButtonStyle.Danger" Size="ButtonSize.Small" Click="@(_ => DownloadCurrent())" />
+            }
         </div>
-    </div>
-</div>
+        <div style="flex:1 1 auto; min-height:0; overflow:auto; padding-right:4px;">
+            @if (_isLoadingContent)
+            {
+                <div class="rz-p-3"><em>Loading content...</em></div>
+            }
+            else if (_currentEmail is null)
+            {
+                <div class="rz-text-muted" style="text-align:center; margin-top:3rem; font-size:1.2rem;">Select a message to view its details.</div>
+            }
+            else
+            {
+                <div class="rz-p-2" style="max-width:100%;">
+                    <p><strong>Subject:</strong> @DisplaySubject(_currentEmail.Metadata.Subject)</p>
+                    <p><strong>From:</strong> @_currentEmail.Metadata.From</p>
+                    <p><strong>Received:</strong> @_currentEmail.Metadata.Received.ToLocalTime()</p>
+                    <p><strong>Recipient User:</strong> @_currentEmail.Metadata.RecipientUser</p>
+                    <hr />
+                    <pre style="white-space:pre-wrap; font-size:0.82rem; line-height:1.15rem;">@_currentEmail.RawEml</pre>
+                </div>
+            }
+        </div>
+    </RadzenColumn>
+</RadzenRow>
 
 @code {
     private List<string>? _recipientFolders;
@@ -111,12 +106,56 @@
     private bool _isLoadingMessages;
     private bool _isLoadingContent;
 
+    // SMTP settings from table
+    private bool _settingsLoaded;
+    private string? _settingsError;
+    private string? _allowedRecipient;
+
+    private string DisplaySubject(string? subject) => string.IsNullOrWhiteSpace(subject) ? "(no subject)" : subject!;
+
     protected override async Task OnInitializedAsync()
     {
+        // Load folders and settings in sequence
         _recipientFolders = (await EmailService.GetRecipientFoldersAsync()).ToList();
+        await LoadSmtpSettingsAsync();
         if (_recipientFolders.Count == 1)
         {
             SelectRecipient(_recipientFolders[0]);
+        }
+    }
+
+    private async Task LoadSmtpSettingsAsync()
+    {
+        try
+        {
+            var table = TableServiceClient.GetTableClient("SMTPSettings");
+            var resp = await table.GetEntityIfExistsAsync<TableEntity>("SmtpServer", "Current");
+            if (resp.HasValue)
+            {
+                var entity = resp.Value;
+                _allowedRecipient = entity.TryGetValue("AllowedRecipient", out var v) ? v?.ToString() : null;
+                _settingsLoaded = true;
+                _settingsError = null;
+            }
+            else
+            {
+                _settingsLoaded = false;
+                _settingsError = "SMTP settings were not found.";
+            }
+        }
+        catch (Exception ex)
+        {
+            _settingsLoaded = false;
+            _settingsError = $"Failed to load SMTP settings: {ex.Message}";
+        }
+    }
+
+    private void OnRecipientChanged(object? value)
+    {
+        var folder = value as string;
+        if (!string.IsNullOrWhiteSpace(folder))
+        {
+            SelectRecipient(folder);
         }
     }
 
@@ -136,6 +175,15 @@
         {
             _isLoadingMessages = false;
             StateHasChanged();
+        }
+    }
+
+    private void OnMessageChanged(object? value)
+    {
+        var id = value?.ToString();
+        if (!string.IsNullOrWhiteSpace(id))
+        {
+            OpenMessage(id);
         }
     }
 
@@ -164,5 +212,44 @@
         var fileName = _currentEmail.Metadata.BlobName.Split('/').Last();
         var url = $"data:text/plain;base64,{base64}";
         JSRuntime.InvokeVoidAsync("eval", $"(function(){{var a=document.createElement('a');a.href='{url}';a.download='{fileName}';a.click();}})();");
+    }
+
+    private async Task NewMessageClick()
+    {
+        if (!_settingsLoaded || string.IsNullOrWhiteSpace(_allowedRecipient))
+        {
+            await DialogService.OpenAsync("SMTP Settings Missing", ds => builder =>
+            {
+                builder.OpenElement(0, "div");
+                builder.AddAttribute(1, "class", "rz-p-3");
+                builder.AddContent(2, _settingsError ?? "SMTP settings were not found.");
+                builder.CloseElement();
+            }, new DialogOptions { Width = "500px" });
+            return;
+        }
+
+        var result = await DialogService.OpenAsync<ComposeEmailDialog>(
+            "New message",
+            new Dictionary<string, object?>
+            {
+                ["DefaultTo"] = _allowedRecipient
+            },
+            new DialogOptions { Width = "700px", CloseDialogOnOverlayClick = false }
+        );
+
+        if (result is bool b && b)
+        {
+            // Refresh folders and select recipient folder of the AllowedRecipient (local-part)
+            var user = _allowedRecipient!.Split('@')[0];
+            _recipientFolders = (await EmailService.GetRecipientFoldersAsync()).ToList();
+            if (_recipientFolders.Contains(user, StringComparer.OrdinalIgnoreCase))
+            {
+                SelectRecipient(user);
+            }
+            else if (_recipientFolders.Count > 0)
+            {
+                SelectRecipient(_recipientFolders[0]);
+            }
+        }
     }
 }

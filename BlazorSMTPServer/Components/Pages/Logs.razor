@@ -1,0 +1,155 @@
+@page "/logs"
+@using Azure.Data.Tables
+@inject TableServiceClient TableServiceClient
+
+<PageTitle>Logs</PageTitle>
+
+<RadzenStack Orientation="Radzen.Orientation.Vertical" Gap="10px">
+    <RadzenRow>
+        <RadzenColumn Size="12">
+            <RadzenTextBox @bind-Value="_search" Placeholder="Search logs (level, category, message)" Style="width: 320px" Change="@(args => ApplySearch())">
+                <Template>
+                    <RadzenIcon Icon="search" Style="margin-right:6px" />
+                </Template>
+            </RadzenTextBox>
+            <RadzenButton Text="Refresh" Icon="refresh" Click="Reload" Style="margin-left:10px" Disabled="@_loading" />
+            @if (_loading)
+            {
+                <span class="rz-ml-2">Loading...</span>
+            }
+            @if (!string.IsNullOrEmpty(_error))
+            {
+                <RadzenAlert Severity="AlertSeverity.Error" Style="margin-left:10px; display:inline-block">@_error</RadzenAlert>
+            }
+        </RadzenColumn>
+    </RadzenRow>
+
+    <RadzenRow>
+        <RadzenColumn Size="12">
+            <RadzenDataGrid TItem="LogView"
+                            Data="@_filtered"
+                            AllowPaging="true"
+                            PageSize="50"
+                            AllowSorting="true"
+                            AllowFiltering="false"
+                            AllowColumnResize="true"
+                            RowHover="true"
+                            Style="height: calc(100vh - 180px);">
+                <Columns>
+                    <RadzenDataGridColumn TItem="LogView" Property="Timestamp" Title="Timestamp" Width="220px" FormatString="{0:yyyy-MM-dd HH:mm:ss.fff}" />
+                    <RadzenDataGridColumn TItem="LogView" Property="Category" Title="Category" Width="320px" />
+                    <RadzenDataGridColumn TItem="LogView" Property="Message" Title="Message" />
+                </Columns>
+            </RadzenDataGrid>
+        </RadzenColumn>
+    </RadzenRow>
+</RadzenStack>
+
+@code {
+    private List<LogView> _all = new();
+    private List<LogView> _filtered = new();
+    private bool _loading;
+    private string? _error;
+    private string _search = string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _error = null;
+        _all.Clear();
+        StateHasChanged();
+        try
+        {
+            var table = TableServiceClient.GetTableClient("SMTPServerLogs");
+            await foreach (var entity in table.QueryAsync<TableEntity>(cancellationToken: CancellationToken.None))
+            {
+                var view = new LogView
+                {
+                    PartitionKey = entity.PartitionKey,
+                    RowKey = entity.RowKey,
+                    Timestamp = ExtractTimestamp(entity),
+                    LogLevel = entity.TryGetValue("LogLevel", out var lvl) ? lvl?.ToString() ?? string.Empty : string.Empty,
+                    Category = entity.TryGetValue("Category", out var cat) ? cat?.ToString() ?? string.Empty : string.Empty,
+                    EventId = entity.TryGetValue("EventId", out var eid) && int.TryParse(eid?.ToString(), out var id) ? id : 0,
+                    EventName = entity.TryGetValue("EventName", out var en) ? en?.ToString() ?? string.Empty : string.Empty,
+                    Message = entity.TryGetValue("Message", out var msg) ? msg?.ToString() ?? string.Empty : string.Empty,
+                    Exception = entity.TryGetValue("Exception", out var ex) ? ex?.ToString() ?? string.Empty : string.Empty,
+                };
+                _all.Add(view);
+            }
+            // Most recent first
+            _all = _all.OrderByDescending(l => l.Timestamp).ToList();
+            ApplySearch();
+        }
+        catch (Exception ex)
+        {
+            _error = $"Failed to load logs: {ex.Message}";
+        }
+        finally
+        {
+            _loading = false;
+            StateHasChanged();
+        }
+    }
+
+    private static DateTime ExtractTimestamp(TableEntity entity)
+    {
+        try
+        {
+            if (entity.TryGetValue("Timestamp", out var tsObj) && tsObj is not null)
+            {
+                if (tsObj is DateTime dt) return dt.ToUniversalTime();
+                if (tsObj is DateTimeOffset dto) return dto.UtcDateTime;
+                if (DateTime.TryParse(tsObj.ToString(), out var parsed)) return parsed.ToUniversalTime();
+            }
+        }
+        catch { }
+        return entity.Timestamp?.UtcDateTime ?? DateTime.MinValue;
+    }
+
+    private void ApplySearch()
+    {
+        var s = _search?.Trim();
+        if (string.IsNullOrEmpty(s))
+        {
+            _filtered = _all.ToList();
+        }
+        else
+        {
+            var term = s.ToLowerInvariant();
+            _filtered = _all.Where(l =>
+                (l.LogLevel?.ToLowerInvariant().Contains(term) ?? false) ||
+                (l.Category?.ToLowerInvariant().Contains(term) ?? false) ||
+                (l.Message?.ToLowerInvariant().Contains(term) ?? false) ||
+                (l.Exception?.ToLowerInvariant().Contains(term) ?? false) ||
+                (l.EventName?.ToLowerInvariant().Contains(term) ?? false) ||
+                l.EventId.ToString().Contains(term) ||
+                (l.PartitionKey?.ToLowerInvariant().Contains(term) ?? false) ||
+                (l.RowKey?.ToLowerInvariant().Contains(term) ?? false)
+            ).ToList();
+        }
+    }
+
+    private Task Reload() => LoadAsync();
+
+    private static string Truncate(string value, int max)
+        => string.IsNullOrEmpty(value) || value.Length <= max ? value : value.Substring(0, max) + "…";
+
+    public class LogView
+    {
+        public string? PartitionKey { get; set; }
+        public string? RowKey { get; set; }
+        public DateTime Timestamp { get; set; }
+        public string? LogLevel { get; set; }
+        public string? Category { get; set; }
+        public int EventId { get; set; }
+        public string? EventName { get; set; }
+        public string? Message { get; set; }
+        public string? Exception { get; set; }
+    }
+}

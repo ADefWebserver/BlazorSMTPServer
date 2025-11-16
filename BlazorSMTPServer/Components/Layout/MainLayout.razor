@@ -2,7 +2,12 @@
 <RadzenComponents @rendermode="InteractiveServer" />
 <div class="page">
     <div class="sidebar">
-        <NavMenu />
+        <RadzenPanelMenu Style="height: 100%; overflow:auto">
+            <RadzenPanelMenuItem Text="Home" Icon="home" Path="/" />
+            <RadzenPanelMenuItem Text="Settings" Icon="settings" Path="settings" />
+            <RadzenPanelMenuItem Text="SMTP Test" Icon="email" Path="smtp-test" />
+            <RadzenPanelMenuItem Text="Features" Icon="list" Path="features" />
+        </RadzenPanelMenu>
     </div>
 
     <main>

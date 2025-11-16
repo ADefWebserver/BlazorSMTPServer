@@ -197,6 +197,30 @@ public class BlobEmailService
         }
     }
 
+    public async Task<bool> DeleteEmailAsync(string blobName, CancellationToken ct = default)
+    {
+        try
+        {
+            var container = await GetOrCreateContainerAsync(ct);
+            var blob = container.GetBlobClient(blobName);
+            var response = await blob.DeleteIfExistsAsync(DeleteSnapshotsOption.IncludeSnapshots, cancellationToken: ct);
+            if (!response.Value)
+            {
+                _logger.LogInformation("Blob '{Blob}' did not exist when attempting delete.", blobName);
+            }
+            return true; // treat as success if it no longer exists
+        }
+        catch (RequestFailedException ex)
+        {
+            _logger.LogWarning(ex, "Deleting blob '{Blob}' failed for container '{Container}'.", blobName, _containerName);
+            return false;
+        }
+        catch (InvalidOperationException)
+        {
+            return false;
+        }
+    }
+
     private static string? TryGetHeader(string eml, string header)
     {
         using var reader = new StringReader(eml);

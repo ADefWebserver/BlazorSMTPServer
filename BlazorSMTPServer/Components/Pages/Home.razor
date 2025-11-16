@@ -53,10 +53,12 @@
                     <RadzenListBox Data="@_messages" ValueProperty="Id" @bind-Value="_selectedMessageId" Change="@OnMessageChanged"
                                    Style="flex:1 1 auto; min-height:0; overflow:auto;">
                         <Template Context="m">
-                            <div style="padding:4px 4px;">
-                                <div style="font-weight:600;" class="rz-truncate" title="@DisplaySubject(m.Subject)">@DisplaySubject(m.Subject)</div>
-                                <small class="rz-text-secondary">From:</small>
-                                <div class="rz-truncate" title="@m.From">@m.From</div>
+                            <div style="padding:4px 4px; display:flex; align-items:center; gap:6px; width:100%;">
+                                <RadzenButton Icon="delete" ButtonStyle="ButtonStyle.Danger" Size="ButtonSize.Small" Click="@(async _ => await ConfirmDeleteAsync(m))" />
+                                <div style="min-width:0; flex:1 1 auto;">
+                                    <div style="font-weight:600;" class="rz-truncate" title="@DisplaySubject(m.Subject)">@DisplaySubject(m.Subject)</div>
+                                    <div class="rz-truncate" title="@m.From">@m.From</div>
+                                </div>
                             </div>
                         </Template>
                     </RadzenListBox>
@@ -213,6 +215,42 @@
         var fileName = _currentEmail.Metadata.BlobName.Split('/').Last();
         var url = $"data:text/plain;base64,{base64}";
         JSRuntime.InvokeVoidAsync("eval", $"(function(){{var a=document.createElement('a');a.href='{url}';a.download='{fileName}';a.click();}})();");
+    }
+
+    private async Task ConfirmDeleteAsync(EmailListItem item)
+    {
+        var confirmed = await DialogService.Confirm($"Delete message '{DisplaySubject(item.Subject)}' from '{item.From}'?", "Confirm Delete", new ConfirmOptions(){ OkButtonText = "Delete", CancelButtonText = "Cancel", CloseDialogOnOverlayClick = true });
+        if (confirmed == true)
+        {
+            var ok = await EmailService.DeleteEmailAsync(item.BlobName);
+            if (ok)
+            {
+                // Refresh list; if the deleted item was selected, clear the preview
+                await RefreshMessagesAsync();
+                if (_currentEmail?.Metadata.BlobName == item.BlobName)
+                {
+                    _currentEmail = null;
+                    _selectedMessageId = null;
+                    StateHasChanged();
+                }
+            }
+        }
+    }
+
+    private async Task RefreshMessagesAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_selectedRecipient)) return;
+        _isLoadingMessages = true;
+        StateHasChanged();
+        try
+        {
+            _messages = (await EmailService.ListEmailsAsync(_selectedRecipient!)).ToList();
+        }
+        finally
+        {
+            _isLoadingMessages = false;
+            StateHasChanged();
+        }
     }
 
     private async Task NewMessageClick()

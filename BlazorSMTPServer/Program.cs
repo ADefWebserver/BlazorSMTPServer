@@ -41,6 +41,7 @@ public class Program
             options.IdleTimeout = TimeSpan.FromHours(8);
         });
         builder.Services.AddRadzenComponents();
+        builder.Services.AddHttpContextAccessor();
         var app = builder.Build();
 
         app.MapDefaultEndpoints();
@@ -92,21 +93,7 @@ public class Program
             }
             // redirect to login
             context.Response.Redirect("/login");
-        });
-
-        // Add SMTP test endpoint for development
-        app.MapGet("/test-smtp", async () =>
-        {
-            try
-            {
-                await SmtpTestClient.TestSmtpServer();
-                return Results.Ok("SMTP tests completed successfully. Check console output for details.");
-            }
-            catch (Exception ex)
-            {
-                return Results.Problem($"SMTP test failed: {ex.Message}");
-            }
-        });
+        });        
 
         // Configure the HTTP request pipeline.
         if (!app.Environment.IsDevelopment())

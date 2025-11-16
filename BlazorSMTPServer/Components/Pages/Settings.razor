@@ -98,7 +98,7 @@
     const string PK = "SmtpServer";
     const string RKSettings = "Current";
 
-    string? ServerName; string? Ports; string? AllowedRecipient; string? AllowedUsername; string? AllowedPassword; string? BlobContainerName; string? LogTableName; string? AppPassword;
+    string? ServerName; string? Ports; string? AllowedRecipient; string? AllowedUsername; string? AllowedPassword; string? AppPassword;
     bool Saved; string? Error;
 
     bool IsLoading; bool Saving; bool ShowPasswords;
@@ -118,11 +118,11 @@
             var settings = await table.GetEntityIfExistsAsync<TableEntity>(PK, RKSettings);
             if (settings.HasValue)
             {
-                ServerName = settings.Value.GetString("ServerName");
-                Ports = settings.Value.GetString("Ports");
-                AllowedRecipient = settings.Value.GetString("AllowedRecipient");
-                AllowedUsername = settings.Value.GetString("AllowedUsername");
-                AllowedPassword = settings.Value.GetString("AllowedPassword");
+                ServerName = settings.Value?.GetString("ServerName");
+                Ports = settings.Value?.GetString("Ports");
+                AllowedRecipient = settings.Value?.GetString("AllowedRecipient");
+                AllowedUsername = settings.Value?.GetString("AllowedUsername");
+                AllowedPassword = settings.Value?.GetString("AllowedPassword");
             }
             // Load only app password from configuration
             AppPassword = Config["AppPassword"];

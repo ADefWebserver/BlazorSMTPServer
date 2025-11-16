@@ -8,9 +8,7 @@
     <RadzenRow>
         <RadzenColumn Size="12">
             <RadzenTextBox @bind-Value="_search" Placeholder="Search logs (level, category, message)" Style="width: 320px" Change="@(args => ApplySearch())">
-                <Template>
-                    <RadzenIcon Icon="search" Style="margin-right:6px" />
-                </Template>
+                <RadzenIcon Icon="search" Style="margin-right:6px" />
             </RadzenTextBox>
             <RadzenButton Text="Refresh" Icon="refresh" Click="Reload" Style="margin-left:10px" Disabled="@_loading" />
             @if (_loading)

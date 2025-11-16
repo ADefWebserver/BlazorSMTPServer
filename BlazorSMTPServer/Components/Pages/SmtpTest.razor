@@ -1,6 +1,9 @@
 @page "/smtp-test"
 @using SMTPServerSvc.TestClient
 @inject IJSRuntime JSRuntime
+@inject Azure.Data.Tables.TableServiceClient TableServiceClient
+@inject NavigationManager Nav
+@inject IHttpContextAccessor HttpContextAccessor
 
 <PageTitle>SMTP Server Test</PageTitle>
 
@@ -49,6 +52,29 @@
     private bool testSuccess = false;
     private List<string> testLogs = new();
 
+    private string ResolveSmtpHost()
+    {
+        // Prefer server local IP from HttpContext if available
+        var ctx = HttpContextAccessor.HttpContext;
+        var localIp = ctx?.Connection.LocalIpAddress?.ToString();
+
+        if (!string.IsNullOrWhiteSpace(localIp))
+        {
+            if (localIp == "::1")
+            {
+                return "localhost";
+            }
+            else
+            {
+                return localIp;
+            }
+        }
+
+        // Fallback to host from NavigationManager (hostname part only)
+        var uri = new Uri(Nav.Uri);
+        return uri.Host;
+    }
+
     private async Task RunSmtpTest()
     {
         isRunning = true;
@@ -65,7 +91,8 @@
             using var stringWriter = new StringWriter();
             Console.SetOut(stringWriter);
 
-            await SmtpTestClient.TestSmtpServer();
+            var smtpHost = ResolveSmtpHost();
+            await SmtpTestClient.TestSmtpServer(TableServiceClient, smtpHost);
 
             // Restore console output
             Console.SetOut(originalOut);

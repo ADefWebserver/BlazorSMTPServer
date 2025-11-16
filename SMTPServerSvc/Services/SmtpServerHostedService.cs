@@ -61,8 +61,8 @@ public class SmtpServerHostedService : BackgroundService
             _logger.LogInformation("Server Name: {ServerName}", _configuration.ServerName);
             _logger.LogInformation("Allowed recipient: {AllowedRecipient}", _configuration.AllowedRecipient);
             _logger.LogInformation("Allowed relay user: {AllowedUsername}", _configuration.AllowedUsername);
-            _logger.LogInformation("Messages will be stored in Azure Blob Storage container: {BlobContainer}", _configuration.BlobContainerName);
-            _logger.LogInformation("Logs will be written to Azure Table Storage table: {LogTable}", _configuration.LogTableName);
+            _logger.LogInformation("Messages will be stored in Azure Blob Storage container: {BlobContainer}", "email-messages");
+            _logger.LogInformation("Logs will be written to Azure Table Storage table: {LogTable}", "SMTPServerLogs");
 
             // Start the server
             await _smtpServer.StartAsync(stoppingToken);

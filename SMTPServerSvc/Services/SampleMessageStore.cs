@@ -26,7 +26,7 @@ public class SampleMessageStore : MessageStore
     {
         _blobServiceClient = blobServiceClient;
         _logger = logger;
-        _containerName = configuration.BlobContainerName;
+        _containerName = "email-messages";
 
         try
         {

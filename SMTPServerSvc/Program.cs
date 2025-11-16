@@ -29,7 +29,7 @@ internal class Program
         var smtpConfig = builder.Configuration.GetSection(SmtpServerConfiguration.SectionName).Get<SmtpServerConfiguration>() ?? new SmtpServerConfiguration();
 
         // Minimal validation
-        if (smtpConfig.Ports is null || smtpConfig.Ports.Length == 0 || string.IsNullOrWhiteSpace(smtpConfig.BlobContainerName) || string.IsNullOrWhiteSpace(smtpConfig.LogTableName) || string.IsNullOrWhiteSpace(smtpConfig.ServerName))
+        if (smtpConfig.Ports is null || smtpConfig.Ports.Length == 0 || string.IsNullOrWhiteSpace(smtpConfig.ServerName))
         {
             var tempLoggerFactory = LoggerFactory.Create(lb => lb.AddConsole());
             var tempLogger = tempLoggerFactory.CreateLogger<Program>();
@@ -44,7 +44,7 @@ internal class Program
         {
             var tableSvcClient = sp.GetRequiredService<TableServiceClient>();
             var cfg = sp.GetRequiredService<SmtpServerConfiguration>();
-            return new TableStorageLoggerProvider(tableSvcClient, cfg.LogTableName);
+            return new TableStorageLoggerProvider(tableSvcClient, "SMTPServerLogs");
         });
 
         // SMTP components
@@ -77,9 +77,8 @@ internal class Program
 
             // Ensure the SMTPSettings table exists and contains the current settings from appsettings.json
             await EnsureSettingsTableAsync(tableClient, smtpConfig, logger);
-
-            await TestBlobAsync(blobClient, smtpConfig.BlobContainerName, logger);
-            await TestTableAsync(tableClient, smtpConfig.LogTableName, logger);
+            await TestBlobAsync(blobClient, "email-messages", logger);
+            await TestTableAsync(tableClient, "SMTPServerLogs", logger);
 
             await host.RunAsync();
         }
@@ -112,9 +111,7 @@ internal class Program
                 { "PortsJson", portsJson },
                 { "AllowedRecipient", cfg.AllowedRecipient ?? string.Empty },
                 { "AllowedUsername", cfg.AllowedUsername ?? string.Empty },
-                { "AllowedPassword", cfg.AllowedPassword ?? string.Empty },
-                { "BlobContainerName", cfg.BlobContainerName ?? string.Empty },
-                { "LogTableName", cfg.LogTableName ?? string.Empty }
+                { "AllowedPassword", cfg.AllowedPassword ?? string.Empty }
             };
 
             await table.UpsertEntityAsync(entity);

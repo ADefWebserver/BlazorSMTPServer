@@ -64,17 +64,6 @@
                                     </div>
                                     <div class="form-text">SMTP auth password (read-only; loaded from table).</div>
                                 </div>
-
-                                <div class="col-12 col-md-6">
-                                    <label class="form-label" for="blobContainerName">Blob Container Name</label>
-                                    <input id="blobContainerName" class="form-control" type="text" placeholder="emails" @bind="BlobContainerName" readonly />
-                                    <div class="form-text">Container for storing received messages.</div>
-                                </div>
-                                <div class="col-12 col-md-6">
-                                    <label class="form-label" for="logTableName">Log Table Name</label>
-                                    <input id="logTableName" class="form-control" type="text" placeholder="emaillogs" @bind="LogTableName" readonly />
-                                    <div class="form-text">Azure Table to store logs.</div>
-                                </div>
                             </div>
                     }
                 </div>
@@ -134,8 +123,6 @@
                 AllowedRecipient = settings.Value.GetString("AllowedRecipient");
                 AllowedUsername = settings.Value.GetString("AllowedUsername");
                 AllowedPassword = settings.Value.GetString("AllowedPassword");
-                BlobContainerName = settings.Value.GetString("BlobContainerName");
-                LogTableName = settings.Value.GetString("LogTableName");
             }
             // Load only app password from configuration
             AppPassword = Config["AppPassword"];

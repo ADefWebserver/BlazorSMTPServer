@@ -31,7 +31,7 @@ public class BlobEmailService
 {
     private readonly BlobServiceClient _blobServiceClient;
     private readonly ILogger<BlobEmailService> _logger;
-    private readonly string? _containerName;
+    private readonly string _containerName = "email-messages";
     private BlobContainerClient? _containerClient;
     private bool _containerEnsured;
 
@@ -39,25 +39,12 @@ public class BlobEmailService
     {
         _blobServiceClient = blobServiceClient;
         _logger = logger;
-
-        // Resolve container name from configuration with sensible fallbacks.
-        // Allows app to run without hard-failing when not configured yet.
-        _containerName =
-            configuration["EmailStorage:Container"]
-            ?? configuration["BlobContainerName"]
-            ?? configuration["AzureStorage:ContainerName"]
-            ?? configuration["Storage:ContainerName"]
-            ?? "emails"; // default container name
     }
 
     private async Task<BlobContainerClient> GetOrCreateContainerAsync(CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(_containerName))
-        {
-            throw new InvalidOperationException("Blob container name is not configured.");
-        }
-
         _containerClient ??= _blobServiceClient.GetBlobContainerClient(_containerName);
+
         if (!_containerEnsured)
         {
             try
@@ -76,14 +63,9 @@ public class BlobEmailService
     public async Task<IReadOnlyList<string>> GetRecipientFoldersAsync(CancellationToken ct = default)
     {
         var results = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
         try
         {
-            if (string.IsNullOrWhiteSpace(_containerName))
-            {
-                _logger.LogInformation("Blob container name not configured. Returning empty list.");
-                return Array.Empty<string>();
-            }
-
             var container = await GetOrCreateContainerAsync(ct);
             await foreach (var blob in container.GetBlobsAsync(prefix: null, cancellationToken: ct))
             {
@@ -119,12 +101,6 @@ public class BlobEmailService
         var items = new List<EmailListItem>();
         try
         {
-            if (string.IsNullOrWhiteSpace(_containerName))
-            {
-                _logger.LogInformation("Blob container name not configured. Returning empty messages.");
-                return items;
-            }
-
             var container = await GetOrCreateContainerAsync(ct);
             var prefix = string.IsNullOrWhiteSpace(recipientFolder) ? null : recipientFolder.Trim('/') + "/";
 
@@ -168,12 +144,6 @@ public class BlobEmailService
     {
         try
         {
-            if (string.IsNullOrWhiteSpace(_containerName))
-            {
-                _logger.LogInformation("Blob container name not configured. Returning null email.");
-                return null;
-            }
-
             var container = await GetOrCreateContainerAsync(ct);
             var blob = container.GetBlobClient(blobName);
             if (!await blob.ExistsAsync(ct))

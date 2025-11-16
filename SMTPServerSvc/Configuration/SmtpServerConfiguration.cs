@@ -36,14 +36,4 @@ public class SmtpServerConfiguration
     /// Allowed relay password (in production, use secure configuration!)
     /// </summary>
     public string AllowedPassword { get; set; } = string.Empty;
-
-    /// <summary>
-    /// Blob container name for storing email messages
-    /// </summary>
-    public string BlobContainerName { get; set; } = string.Empty;
-
-    /// <summary>
-    /// Table name for storing logs
-    /// </summary>
-    public string LogTableName { get; set; } = string.Empty;
 }

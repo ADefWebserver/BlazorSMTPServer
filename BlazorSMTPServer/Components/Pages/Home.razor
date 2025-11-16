@@ -55,7 +55,8 @@
                         <Template Context="m">
                             <div style="padding:4px 4px;">
                                 <div style="font-weight:600;" class="rz-truncate" title="@DisplaySubject(m.Subject)">@DisplaySubject(m.Subject)</div>
-                                <small class="rz-text-secondary">From:</small><br />
+                                <small class="rz-text-secondary">From:</small>
+                                <div class="rz-truncate" title="@m.From">@m.From</div>
                             </div>
                         </Template>
                     </RadzenListBox>

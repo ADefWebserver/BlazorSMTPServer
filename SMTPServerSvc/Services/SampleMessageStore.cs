@@ -115,16 +115,34 @@ public class SampleMessageStore : MessageStore
 
             // Convert buffer to string for storage
             var messageContent = Encoding.UTF8.GetString(buffer.ToArray());
+
+            // Extract Subject/From from the ORIGINAL MIME headers
+            static string? HeaderFromOriginal(string content, string key)
+            {
+                using var sr = new StringReader(content);
+                string? l;
+                var prefix = key + ":";
+                while ((l = sr.ReadLine()) != null)
+                {
+                    if (string.IsNullOrWhiteSpace(l)) break; // end of original headers
+                    if (l.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return l.Substring(prefix.Length).Trim();
+                    }
+                }
+                return null;
+            }
+
+            var originalSubject = HeaderFromOriginal(messageContent, "Subject") ?? "(no subject)";
+            var originalFrom = HeaderFromOriginal(messageContent, "From") ?? string.Empty;
             
-            // Add metadata to the message
+            // Add metadata preamble (custom headers) followed by a blank line, then original message content
             var enhancedContent = new StringBuilder();
             enhancedContent.AppendLine($"X-SMTP-Server-Received: {DateTime.UtcNow:R}");
             enhancedContent.AppendLine($"X-SMTP-Server-Session: {sessionId}");
             enhancedContent.AppendLine($"X-SMTP-Server-Transaction: {transactionId}");
             enhancedContent.AppendLine($"X-SMTP-Server-BlobName: {blobPath}");
             enhancedContent.AppendLine($"X-SMTP-Server-Recipient-User: {recipientUser}");
-            
-            // Add original message content
             enhancedContent.AppendLine();
             enhancedContent.Append(messageContent);
 
@@ -134,7 +152,7 @@ public class SampleMessageStore : MessageStore
             using var stream = new MemoryStream(Encoding.UTF8.GetBytes(enhancedContent.ToString()));
             await blobClient.UploadAsync(stream, overwrite: true, cancellationToken);
 
-            // Set metadata
+            // Set metadata (include Subject/From so the list view can show them without downloading)
             var metadata = new Dictionary<string, string>
             {
                 ["SessionId"] = sessionId?.ToString() ?? "unknown",
@@ -142,7 +160,9 @@ public class SampleMessageStore : MessageStore
                 ["ReceivedAt"] = DateTime.UtcNow.ToString("O"),
                 ["MessageSize"] = buffer.Length.ToString(),
                 ["ContainerName"] = _containerName,
-                ["RecipientUser"] = recipientUser
+                ["RecipientUser"] = recipientUser,
+                ["Subject"] = originalSubject,
+                ["From"] = originalFrom
             };
 
             await blobClient.SetMetadataAsync(metadata, cancellationToken: cancellationToken);

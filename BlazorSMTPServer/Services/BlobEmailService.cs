@@ -157,7 +157,7 @@ public class BlobEmailService
             ms.Position = 0;
             var raw = Encoding.UTF8.GetString(ms.ToArray());
 
-            // Quick header parse for Subject/From if not in metadata
+            // Quick header parse for Subject/From even if the original headers were appended after custom ones
             string subject = TryGetHeader(raw, "Subject") ?? "(no subject)";
             string from = TryGetHeader(raw, "From") ?? "";
             string recipient = TryGetHeader(raw, "X-SMTP-Server-Recipient-User") ?? "";
@@ -202,14 +202,28 @@ public class BlobEmailService
         using var reader = new StringReader(eml);
         string? line;
         var headerPrefix = header + ":";
+        int blankBlocksSeen = 0;
+        int linesScanned = 0;
         while ((line = reader.ReadLine()) != null)
         {
+            linesScanned++;
+            if (linesScanned > 400) break; // safety bound near top of file
+
             if (line.StartsWith(headerPrefix, StringComparison.OrdinalIgnoreCase))
             {
                 return line.Substring(headerPrefix.Length).Trim();
             }
+
             if (string.IsNullOrWhiteSpace(line))
-                break; // end of headers
+            {
+                blankBlocksSeen++;
+                if (blankBlocksSeen >= 2)
+                {
+                    // We scanned two header-like blocks (custom + original). Bail to avoid scanning body.
+                    break;
+                }
+                continue;
+            }
         }
         return null;
     }

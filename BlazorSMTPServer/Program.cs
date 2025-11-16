@@ -1,11 +1,12 @@
-using BlazorSMTPServer.Components;
-using SMTPServerSvc.TestClient;
-using Azure.Storage.Blobs;
-using BlazorSMTPServer.Services;
 using Azure.Data.Tables;
-using Microsoft.AspNetCore.Components;
+using Azure.Storage.Blobs;
+using BlazorSMTPServer.Components;
+using BlazorSMTPServer.Services;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Components;
 using Microsoft.Extensions.DependencyInjection;
+using Radzen;
+using SMTPServerSvc.TestClient;
 
 namespace BlazorSMTPServer;
 
@@ -39,7 +40,7 @@ public class Program
             options.Cookie.IsEssential = true; // required for non-consent scenarios
             options.IdleTimeout = TimeSpan.FromHours(8);
         });
-
+        builder.Services.AddRadzenComponents();
         var app = builder.Build();
 
         app.MapDefaultEndpoints();

@@ -2,6 +2,7 @@
 @using Microsoft.AspNetCore.Components
 @using System.Net.Mail
 @using System.Net
+@using System.ComponentModel.DataAnnotations
 
 <div class="rz-p-2">
     @if (!string.IsNullOrWhiteSpace(_settingsError))
@@ -9,7 +10,8 @@
         <div class="rz-text-danger rz-mb-2">@_settingsError</div>
     }
 
-    <EditForm Model="@_model" OnValidSubmit="SendAsync">
+    <EditForm Model="@_model" OnValidSubmit="HandleValidSubmitAsync">
+        <DataAnnotationsValidator />
         <div class="rz-grid rz-g-2">
             <div>
                 <RadzenLabel Text="From" />
@@ -29,7 +31,7 @@
             </div>
             <div class="rz-d-flex rz-justify-content-end rz-g-2" style="grid-column: 1 / -1;">
                 <RadzenButton Text="Cancel" ButtonStyle="ButtonStyle.Light" Click="@Cancel" />
-                <RadzenButton ButtonStyle="ButtonStyle.Primary" Disabled="@_sending" Submit="true" Text="@(_sending ? "Sending..." : "Send")" />
+                <RadzenButton ButtonStyle="ButtonStyle.Primary" Disabled="@_sending" ButtonType="Radzen.ButtonType.Submit" Text="@(_sending ? "Sending..." : "Send")" />
             </div>
         </div>
     </EditForm>
@@ -42,9 +44,14 @@
 
     private class ComposeModel
     {
+        [EmailAddress]
         public string From { get; set; } = "sender@example.com";
+        [Required(ErrorMessage = "Recipient (To) is required.")]
+        [EmailAddress(ErrorMessage = "Invalid email address.")]
         public string To { get; set; } = string.Empty;
+        [Required]
         public string Subject { get; set; } = "Test from Blazor";
+        [Required]
         public string Body { get; set; } = "This is a test email from the Blazor app.";
     }
 
@@ -65,6 +72,11 @@
     {
         DialogService.Close(false);
         return Task.CompletedTask;
+    }
+
+    private async Task HandleValidSubmitAsync(EditContext _)
+    {
+        await SendAsync();
     }
 
     private async Task SendAsync()

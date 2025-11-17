@@ -46,6 +46,9 @@
 
 @code {
     [Parameter] public string? DefaultTo { get; set; }
+    [Parameter] public string? DefaultFrom { get; set; }
+    [Parameter] public string? DefaultSubject { get; set; }
+    [Parameter] public string? DefaultBody { get; set; }
 
     [Inject] public DialogService DialogService { get; set; } = default!;
     [Inject] public NotificationService NotificationService { get; set; } = default!;
@@ -73,9 +76,21 @@
 
     protected override void OnParametersSet()
     {
-        if (string.IsNullOrWhiteSpace(_model.To))
+        if (!string.IsNullOrWhiteSpace(DefaultTo) && string.IsNullOrWhiteSpace(_model.To))
         {
-            _model.To = DefaultTo ?? string.Empty;
+            _model.To = DefaultTo!;
+        }
+        if (!string.IsNullOrWhiteSpace(DefaultFrom))
+        {
+            _model.From = DefaultFrom!;
+        }
+        if (!string.IsNullOrWhiteSpace(DefaultSubject))
+        {
+            _model.Subject = DefaultSubject!;
+        }
+        if (DefaultBody is not null)
+        {
+            _model.Body = DefaultBody;
         }
     }
 

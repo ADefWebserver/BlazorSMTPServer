@@ -2,6 +2,7 @@
 @using BlazorSMTPServer.Services
 @using Azure.Data.Tables
 @using BlazorSMTPServer.Components.Dialogs
+@using System.Globalization
 @inject BlobEmailService EmailService
 @inject Microsoft.JSInterop.IJSRuntime JSRuntime
 @inject Radzen.DialogService DialogService
@@ -69,10 +70,11 @@
 
     <!-- Right column: preview -->
     <RadzenColumn Size="9" Style="height:100%; min-width:0; display:flex; flex-direction:column;">
-        <!-- Download button row (search removed) -->
+        <!-- Actions row -->
         <div class="rz-d-flex rz-align-items-center" style="gap:12px; padding:4px 0;">
             @if (_currentEmail is not null)
             {
+                <RadzenButton Text="Reply" Icon="reply" ButtonStyle="ButtonStyle.Primary" Size="ButtonSize.Small" Click="@(_ => ReplyToCurrent())" />
                 <RadzenButton Text="Download .eml" Icon="download" ButtonStyle="ButtonStyle.Danger" Size="ButtonSize.Small" Click="@(_ => DownloadCurrent())" />
             }
         </div>
@@ -229,6 +231,74 @@
         }
         var body = text.Substring(second + 2);
         return body;
+    }
+
+    private static string? GetHeader(string raw, string headerName)
+    {
+        if (string.IsNullOrEmpty(raw)) return null;
+        using var reader = new StringReader(raw);
+        string? line;
+        var prefix = headerName + ":";
+        var blankSeen = 0;
+        while ((line = reader.ReadLine()) != null)
+        {
+            if (string.IsNullOrWhiteSpace(line))
+            {
+                blankSeen++;
+                if (blankSeen > 2) break; // don't scan into body
+                continue;
+            }
+            if (line.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                return line.Substring(prefix.Length).Trim();
+            }
+        }
+        return null;
+    }
+
+    private async void ReplyToCurrent()
+    {
+        if (_currentEmail is null) return;
+
+        var originalFrom = GetHeader(_currentEmail.RawEml, "From") ?? _currentEmail.Metadata.From;
+        var originalTo = GetHeader(_currentEmail.RawEml, "To") ?? _allowedRecipient ?? _currentEmail.Metadata.RecipientUser + "@example.com";
+        var originalSubject = _currentEmail.Metadata.Subject;
+        var subject = !string.IsNullOrWhiteSpace(originalSubject) && !originalSubject.StartsWith("re:", StringComparison.OrdinalIgnoreCase)
+            ? "re: " + originalSubject
+            : originalSubject;
+
+        // Parse "Date" header to a friendly local string if possible
+        var dateHeader = GetHeader(_currentEmail.RawEml, "Date");
+        string sentDisplay;
+        if (DateTimeOffset.TryParse(dateHeader, out var sentDto))
+        {
+            sentDisplay = sentDto.ToLocalTime().ToString("f", CultureInfo.CurrentCulture);
+        }
+        else
+        {
+            sentDisplay = _currentEmail.Metadata.Received.ToLocalTime().ToString("f", CultureInfo.CurrentCulture);
+        }
+
+        var quotedHeader = $"From: {originalFrom}\nSent: {sentDisplay}\nTo: {originalTo}\nSubject: {originalSubject}";
+        var originalBody = _currentBody ?? ExtractBody(_currentEmail.RawEml);
+        var defaultBody = "\n\n-----Original Message-----\n" + quotedHeader + "\n\n" + originalBody;
+
+        var result = await DialogService.OpenAsync<ComposeEmailDialog>(
+            "Reply",
+            new Dictionary<string, object?>
+            {
+                ["DefaultTo"] = originalFrom,
+                ["DefaultFrom"] = originalTo,
+                ["DefaultSubject"] = subject,
+                ["DefaultBody"] = defaultBody
+            },
+            new DialogOptions { Width = "700px", CloseDialogOnOverlayClick = false }
+        );
+
+        if (result is bool b && b)
+        {
+            await RefreshMessagesAsync();
+        }
     }
 
     private void DownloadCurrent()

@@ -17,6 +17,8 @@ public class Program
         var builder = WebApplication.CreateBuilder(args);
         builder.AddServiceDefaults();
 
+        builder.Configuration.AddUserSecrets<Program>(optional: true);
+
         // Add Azure Blob Service client from Aspire resource reference ("blobs")
         builder.AddAzureBlobServiceClient("blobs");
         // Add Azure Table Service client for settings storage 
@@ -125,7 +127,7 @@ public class AppPasswordValidator
 
     public Task<string?> GetPasswordAsync()
     {
-        // Read from appsettings.json (supports reloadOnChange)
+        // Read from configuration (User Secrets override appsettings in Development)
         var pwd = _configuration["AppPassword"];
         return Task.FromResult<string?>(pwd);
     }

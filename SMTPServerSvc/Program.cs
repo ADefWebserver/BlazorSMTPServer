@@ -21,6 +21,8 @@ internal class Program
         var builder = Host.CreateApplicationBuilder(args);
         builder.AddServiceDefaults();
 
+        builder.Configuration.AddUserSecrets<Program>(optional: true);
+
         // Add Azure clients from Aspire resource references (names must match AppHost: blobs, tables)
         builder.AddAzureBlobServiceClient("blobs");
         builder.AddAzureTableServiceClient("tables");
@@ -111,7 +113,8 @@ internal class Program
                 { "PortsJson", portsJson },
                 { "AllowedRecipient", cfg.AllowedRecipient ?? string.Empty },
                 { "AllowedUsername", cfg.AllowedUsername ?? string.Empty },
-                { "AllowedPassword", cfg.AllowedPassword ?? string.Empty }
+                { "AllowedPassword", cfg.AllowedPassword ?? string.Empty },
+                { "SpamhausKey", cfg.SpamhausKey ?? string.Empty }
             };
 
             await table.UpsertEntityAsync(entity);

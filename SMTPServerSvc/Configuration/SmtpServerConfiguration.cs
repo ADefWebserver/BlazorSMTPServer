@@ -36,4 +36,9 @@ public class SmtpServerConfiguration
     /// Allowed relay password (in production, use secure configuration!)
     /// </summary>
     public string AllowedPassword { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Optional Spamhaus API key used for spam checks
+    /// </summary>
+    public string SpamhausKey { get; set; } = string.Empty;
 }

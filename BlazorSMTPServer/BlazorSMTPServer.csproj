@@ -4,6 +4,8 @@
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <!-- Share the same UserSecretsId as SMTPServerSvc so secrets override in both apps -->
+    <UserSecretsId>ad5f85c4-ae2a-4ade-9769-cb780a9ff601</UserSecretsId>
   </PropertyGroup>
 
   <ItemGroup>

@@ -36,7 +36,11 @@
                             RowHover="true"
                             Style="height: calc(100vh - 180px);">
                 <Columns>
-                    <RadzenDataGridColumn TItem="LogView" Property="Timestamp" Title="Timestamp" Width="220px" FormatString="{0:yyyy-MM-dd HH:mm:ss.fff}" />
+                    <RadzenDataGridColumn TItem="LogView" Title="Timestamp" Width="220px">
+                        <Template Context="item">
+                            @FormatLocal(item.Timestamp)
+                        </Template>
+                    </RadzenDataGridColumn>
                     <RadzenDataGridColumn TItem="LogView" Property="Category" Title="Category" Width="320px" />
                     <RadzenDataGridColumn TItem="LogView" Property="Message" Title="Message" />
                 </Columns>
@@ -63,6 +67,9 @@
     private ElementReference _sentinel;
     private DotNetObjectReference<Logs>? _dotNetRef; // Keep reference alive for JS callbacks
 
+    // Browser timezone offset in minutes (UTC - Local). If null, we haven't detected yet.
+    private int? _tzOffsetMinutes;
+
     protected override async Task OnInitializedAsync()
     {
         await ResetAndInitialLoadAsync();
@@ -81,6 +88,14 @@
             {
                 // If the script isn't loaded yet, ignore silently
             }
+
+            // Get browser timezone offset once and re-render to show local times
+            try
+            {
+                _tzOffsetMinutes = await JS.InvokeAsync<int>("blazorTime.getTimezoneOffsetMinutes");
+                StateHasChanged();
+            }
+            catch { /* optional: ignore if script not available */ }
         }
     }
 
@@ -207,6 +222,21 @@
 
     private static string Truncate(string value, int max)
         => string.IsNullOrEmpty(value) || value.Length <= max ? value : value.Substring(0, max) + "…";
+
+    private string FormatLocal(DateTime utc)
+    {
+        // Ensure UTC kind for consistent conversion
+        var dt = DateTime.SpecifyKind(utc, DateTimeKind.Utc);
+        if (_tzOffsetMinutes is int minutes)
+        {
+            // getTimezoneOffset returns minutes between UTC and local time (UTC - Local)
+            // Local = UTC - offset
+            var local = dt.AddMinutes(-minutes);
+            return local.ToString("yyyy-MM-dd HH:mm:ss.fff");
+        }
+        // Fallback to UTC display until we detect browser offset
+        return dt.ToString("yyyy-MM-dd HH:mm:ss.fff 'UTC'");
+    }
 
     public class LogView
     {

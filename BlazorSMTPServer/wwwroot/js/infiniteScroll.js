@@ -31,4 +31,12 @@
   }
 
   window.infiniteScroll = { observe, disconnect };
+
+  // Time helpers exposed for Blazor to read browser local offset
+  window.blazorTime = {
+    getTimezoneOffsetMinutes: function(){
+      // Same sign convention as Date.getTimezoneOffset(): minutes between UTC and local (UTC - Local)
+      return new Date().getTimezoneOffset();
+    }
+  };
 })();

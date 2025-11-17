@@ -1,3 +1,4 @@
+## NOTE: Development is currently *in Progress*
 # BLAZOR SMTP SERVER
 
 <img width="700" height="397" alt="image" src="https://github.com/user-attachments/assets/d9c3984d-2205-4448-abb3-1f0983756c70" />

@@ -30,6 +30,17 @@ public class SmtpTestClient
             await SendTestEmail(tableServiceClient, smtpHost, "sender@example.com", $"TestUserOne@{servername}", 
                 "Test Email With Auth", "This is a test email with authentication.", true);
 
+            // Test 4: Send email to 'abuse' role account (should work)
+            if (!string.IsNullOrWhiteSpace(servername))
+            {
+                await SendTestEmail(tableServiceClient, smtpHost, "sender@example.com", $"abuse@{servername}",
+                    "Test Email to abuse", "This is a test email to the abuse mailbox.", false);
+
+                // Test 5: Send email to 'postmaster' role account (should work)
+                await SendTestEmail(tableServiceClient, smtpHost, "sender@example.com", $"postmaster@{servername}",
+                    "Test Email to postmaster", "This is a test email to the postmaster mailbox.", false);
+            }
+
             Console.WriteLine("SMTP Server tests completed.");
         }
         catch (Exception ex)

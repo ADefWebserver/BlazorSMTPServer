@@ -16,7 +16,7 @@
     <RadzenColumn Size="3" Style="height:100%; display:flex; flex-direction:column; gap:10px;">
         <RadzenButton Text="New message" Icon="play_arrow" ButtonStyle="ButtonStyle.Success" Style="width:100%;" Click="@NewMessageClick" />
 
-        <!-- Recipient list -->
+        <!-- Recipient selector -->
         <div style="display:flex; flex-direction:column; flex:1 1 auto; min-height:0;">
             @if (_recipientFolders is null)
             {
@@ -28,17 +28,11 @@
             }
             else
             {
-                <RadzenListBox Data="@_recipientFolders"
-                               @bind-Value="_selectedRecipient"
-                               Change="@OnRecipientChanged"
-                               Style="margin-bottom:10px;" Filterable="false">
-                    <Template Context="folder">
-                        <div class="rz-d-flex rz-align-items-center">
-                            <RadzenIcon Icon="mail" Class="rz-mr-2" />
-                            <span>@folder</span>
-                        </div>
-                    </Template>
-                </RadzenListBox>
+                <RadzenDropDown Data="@_recipientFolders"
+                                 @bind-Value="_selectedRecipient"
+                                 Change="@OnRecipientChanged"
+                                 Placeholder="Select mailbox..."
+                                 Style="margin-bottom:10px; width:100%;" />
 
                 <!-- Messages list -->
                 @if (_isLoadingMessages)
@@ -122,13 +116,45 @@
 
     protected override async Task OnInitializedAsync()
     {
-        // Load folders and settings in sequence
-        _recipientFolders = (await EmailService.GetRecipientFoldersAsync()).ToList();
+        // Load settings first so we can augment folders with standard mailboxes
         await LoadSmtpSettingsAsync();
-        if (_recipientFolders.Count == 1)
+
+        var folders = (await EmailService.GetRecipientFoldersAsync()).ToList();
+        _recipientFolders = EnsureDefaultMailboxes(folders);
+
+        // Prefer selecting the configured user's folder if available, otherwise keep current selection or pick first
+        var configuredUser = GetUserFromEmail(_allowedRecipient);
+        if (!string.IsNullOrWhiteSpace(configuredUser) && _recipientFolders.Contains(configuredUser, StringComparer.OrdinalIgnoreCase))
+        {
+            SelectRecipient(configuredUser);
+        }
+        else if (!string.IsNullOrWhiteSpace(_selectedRecipient))
+        {
+            SelectRecipient(_selectedRecipient);
+        }
+        else if (_recipientFolders.Count > 0)
         {
             SelectRecipient(_recipientFolders[0]);
         }
+    }
+
+    private static string? GetUserFromEmail(string? email)
+    {
+        if (string.IsNullOrWhiteSpace(email)) return null;
+        var at = email.IndexOf('@');
+        return at > 0 ? email[..at] : email;
+    }
+
+    private List<string> EnsureDefaultMailboxes(IEnumerable<string> existing)
+    {
+        var set = new HashSet<string>(existing ?? Enumerable.Empty<string>(), StringComparer.OrdinalIgnoreCase);
+        // Always include role accounts
+        set.Add("abuse");
+        set.Add("postmaster");
+        // Include configured recipient local-part if present
+        var configuredUser = GetUserFromEmail(_allowedRecipient);
+        if (!string.IsNullOrWhiteSpace(configuredUser)) set.Add(configuredUser);
+        return set.OrderBy(s => s, StringComparer.OrdinalIgnoreCase).ToList();
     }
 
     private async Task LoadSmtpSettingsAsync()
@@ -143,6 +169,9 @@
                 if (entity != null)
                 {
                     _allowedRecipient = entity.TryGetValue("AllowedRecipient", out var v) ? v?.ToString() : null;
+                    string? ServerName = entity.TryGetValue("ServerName", out var x) ? x?.ToString() : "";
+
+                    _allowedRecipient = $"{_allowedRecipient}@{ServerName}";
                 }
                 else
                 {
@@ -381,8 +410,8 @@
         if (result is bool b && b)
         {
             // Refresh folders and select recipient folder of the AllowedRecipient (local-part)
-            var user = _allowedRecipient!.Split('@')[0];
-            _recipientFolders = (await EmailService.GetRecipientFoldersAsync()).ToList();
+            var user = GetUserFromEmail(_allowedRecipient!) ?? _allowedRecipient!;
+            _recipientFolders = EnsureDefaultMailboxes(await EmailService.GetRecipientFoldersAsync());
             if (_recipientFolders.Contains(user, StringComparer.OrdinalIgnoreCase))
             {
                 SelectRecipient(user);

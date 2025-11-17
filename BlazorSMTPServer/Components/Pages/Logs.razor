@@ -1,6 +1,8 @@
 @page "/logs"
 @using Azure.Data.Tables
+@using Microsoft.JSInterop
 @inject TableServiceClient TableServiceClient
+@inject IJSRuntime JS
 
 <PageTitle>Logs</PageTitle>
 
@@ -43,6 +45,9 @@
     </RadzenRow>
 </RadzenStack>
 
+<!-- Sentinel used for infinite scroll trigger -->
+<div style="height:1px" @ref="_sentinel"></div>
+
 @code {
     private List<LogView> _all = new();
     private List<LogView> _filtered = new();
@@ -50,36 +55,97 @@
     private string? _error;
     private string _search = string.Empty;
 
+    // Paging via continuation token
+    private string? _continuationToken;
+    private bool _hasMore;
+    private readonly int _pageSize = 200;
+
+    private ElementReference _sentinel;
+    private DotNetObjectReference<Logs>? _dotNetRef; // Keep reference alive for JS callbacks
+
     protected override async Task OnInitializedAsync()
     {
-        await LoadAsync();
+        await ResetAndInitialLoadAsync();
     }
 
-    private async Task LoadAsync()
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            _dotNetRef = DotNetObjectReference.Create(this);
+            try
+            {
+                await JS.InvokeVoidAsync("infiniteScroll.observe", _sentinel, _dotNetRef);
+            }
+            catch
+            {
+                // If the script isn't loaded yet, ignore silently
+            }
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("infiniteScroll.disconnect", _sentinel);
+        }
+        catch { }
+        _dotNetRef?.Dispose();
+    }
+
+    [JSInvokable]
+    public async Task OnInfiniteScroll()
+    {
+        if (_loading || !_hasMore) return;
+        await LoadNextPageAsync();
+    }
+
+    private async Task ResetAndInitialLoadAsync()
+    {
+        _continuationToken = null;
+        _hasMore = true;
+        _all.Clear();
+        _filtered.Clear();
+        await LoadNextPageAsync();
+    }
+
+    private async Task LoadNextPageAsync()
     {
         _loading = true;
         _error = null;
-        _all.Clear();
         StateHasChanged();
         try
         {
             var table = TableServiceClient.GetTableClient("SMTPServerLogs");
-            await foreach (var entity in table.QueryAsync<TableEntity>(cancellationToken: CancellationToken.None))
+
+            // Read a single page using the current continuation token
+            await foreach (var page in table.QueryAsync<TableEntity>().AsPages(_continuationToken, _pageSize))
             {
-                var view = new LogView
+                foreach (var entity in page.Values)
                 {
-                    PartitionKey = entity.PartitionKey,
-                    RowKey = entity.RowKey,
-                    Timestamp = ExtractTimestamp(entity),
-                    LogLevel = entity.TryGetValue("LogLevel", out var lvl) ? lvl?.ToString() ?? string.Empty : string.Empty,
-                    Category = entity.TryGetValue("Category", out var cat) ? cat?.ToString() ?? string.Empty : string.Empty,
-                    EventId = entity.TryGetValue("EventId", out var eid) && int.TryParse(eid?.ToString(), out var id) ? id : 0,
-                    EventName = entity.TryGetValue("EventName", out var en) ? en?.ToString() ?? string.Empty : string.Empty,
-                    Message = entity.TryGetValue("Message", out var msg) ? msg?.ToString() ?? string.Empty : string.Empty,
-                    Exception = entity.TryGetValue("Exception", out var ex) ? ex?.ToString() ?? string.Empty : string.Empty,
-                };
-                _all.Add(view);
+                    var view = new LogView
+                    {
+                        PartitionKey = entity.PartitionKey,
+                        RowKey = entity.RowKey,
+                        Timestamp = ExtractTimestamp(entity),
+                        LogLevel = entity.TryGetValue("LogLevel", out var lvl) ? lvl?.ToString() ?? string.Empty : string.Empty,
+                        Category = entity.TryGetValue("Category", out var cat) ? cat?.ToString() ?? string.Empty : string.Empty,
+                        EventId = entity.TryGetValue("EventId", out var eid) && int.TryParse(eid?.ToString(), out var id) ? id : 0,
+                        EventName = entity.TryGetValue("EventName", out var en) ? en?.ToString() ?? string.Empty : string.Empty,
+                        Message = entity.TryGetValue("Message", out var msg) ? msg?.ToString() ?? string.Empty : string.Empty,
+                        Exception = entity.TryGetValue("Exception", out var ex) ? ex?.ToString() ?? string.Empty : string.Empty,
+                    };
+                    _all.Add(view);
+                }
+
+                _continuationToken = page.ContinuationToken;
+                _hasMore = !string.IsNullOrEmpty(_continuationToken);
+
+                // Take only the first page in this invocation
+                break;
             }
+
             // Most recent first
             _all = _all.OrderByDescending(l => l.Timestamp).ToList();
             ApplySearch();
@@ -87,6 +153,7 @@
         catch (Exception ex)
         {
             _error = $"Failed to load logs: {ex.Message}";
+            _hasMore = false;
         }
         finally
         {
@@ -133,7 +200,10 @@
         }
     }
 
-    private Task Reload() => LoadAsync();
+    private async Task Reload()
+    {
+        await ResetAndInitialLoadAsync();
+    }
 
     private static string Truncate(string value, int max)
         => string.IsNullOrEmpty(value) || value.Length <= max ? value : value.Substring(0, max) + "…";

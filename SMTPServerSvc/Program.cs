@@ -53,7 +53,7 @@ internal class Program
         builder.Services.AddSingleton<SampleMailboxFilter>();
         builder.Services.AddSingleton<IMailboxFilter>(sp => sp.GetRequiredService<SampleMailboxFilter>());
         builder.Services.AddSingleton<SampleUserAuthenticator>();
-        builder.Services.AddSingleton<IUserAuthenticator>(sp => sp.GetRequiredService<SampleUserAuthenticator>()); // fixed missing dot
+        builder.Services.AddSingleton<IUserAuthenticator>(sp => sp.GetRequiredService<SampleUserAuthenticator>()); 
         builder.Services.AddHostedService<SmtpServerHostedService>();
 
         var host = builder.Build();

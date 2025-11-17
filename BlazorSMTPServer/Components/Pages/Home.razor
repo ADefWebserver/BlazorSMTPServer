@@ -140,7 +140,14 @@
             if (resp.HasValue)
             {
                 var entity = resp.Value;
-                _allowedRecipient = entity.TryGetValue("AllowedRecipient", out var v) ? v?.ToString() : null;
+                if (entity != null)
+                {
+                    _allowedRecipient = entity.TryGetValue("AllowedRecipient", out var v) ? v?.ToString() : null;
+                }
+                else
+                {
+                    _allowedRecipient = "";
+                }
                 _settingsLoaded = true;
                 _settingsError = null;
             }
@@ -313,7 +320,7 @@
 
     private async Task ConfirmDeleteAsync(EmailListItem item)
     {
-        var confirmed = await DialogService.Confirm($"Delete message '{DisplaySubject(item.Subject)}' from '{item.From}'?", "Confirm Delete", new ConfirmOptions(){ OkButtonText = "Delete", CancelButtonText = "Cancel", CloseDialogOnOverlayClick = true });
+        var confirmed = await DialogService.Confirm($"Delete message '{DisplaySubject(item.Subject)}' from '{item.From}'?", "Confirm Delete", new ConfirmOptions() { OkButtonText = "Delete", CancelButtonText = "Cancel", CloseDialogOnOverlayClick = true });
         if (confirmed == true)
         {
             var ok = await EmailService.DeleteEmailAsync(item.BlobName);

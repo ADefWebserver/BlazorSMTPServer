@@ -17,7 +17,7 @@ public class SampleMailboxFilter : IMailboxFilter
     public SampleMailboxFilter(SmtpServerConfiguration configuration, ILogger<SampleMailboxFilter> logger)
     {
         _logger = logger;
-        _allowedRecipient = configuration.AllowedRecipient;
+        _allowedRecipient = $"{configuration.AllowedRecipient}@{configuration.ServerName}";
         
         _logger.LogInformation("SampleMailboxFilter initialized. Only allowing emails to: {AllowedRecipient}", _allowedRecipient);
     }

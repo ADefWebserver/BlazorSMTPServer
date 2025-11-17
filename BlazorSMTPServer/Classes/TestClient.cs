@@ -15,9 +15,11 @@ public class SmtpTestClient
         try
         {
             Console.WriteLine("Testing SMTP Server...");
-            
+
+            var servername = await GetServerNameAsync(tableServiceClient);
+
             // Test 1: Send email to allowed recipient without authentication (should work)
-            await SendTestEmail(tableServiceClient, smtpHost, "sender@example.com", "TestUserOne@BlazorHelpWebsiteEmail.com", 
+            await SendTestEmail(tableServiceClient, smtpHost, "sender@example.com", $"TestUserOne@{servername}", 
                 "Test Email Without Auth", "This is a test email without authentication.", false);
 
             // Test 2: Send email to disallowed recipient (should fail)
@@ -25,7 +27,7 @@ public class SmtpTestClient
                 "Test Email to Disallowed Recipient", "This should fail.", false);
 
             // Test 3: Send email with authentication (should work)
-            await SendTestEmail(tableServiceClient, smtpHost, "sender@example.com", "TestUserOne@BlazorHelpWebsiteEmail.com", 
+            await SendTestEmail(tableServiceClient, smtpHost, "sender@example.com", $"TestUserOne@{servername}", 
                 "Test Email With Auth", "This is a test email with authentication.", true);
 
             Console.WriteLine("SMTP Server tests completed.");
@@ -99,6 +101,33 @@ public class SmtpTestClient
         {
             Console.WriteLine($"Warning: Could not read SMTP credentials from table storage. {ex.Message}");
             return (null, null);
+        }
+    }
+
+    private static async Task<string> GetServerNameAsync(TableServiceClient tableServiceClient)
+    {
+        const string SettingsTableName = "SMTPSettings";
+        const string PartitionKey = "SmtpServer";
+        const string RowKey = "Current";
+        try
+        {
+            var table = tableServiceClient.GetTableClient(SettingsTableName);
+            var entityResponse = await table.GetEntityAsync<TableEntity>(PartitionKey, RowKey);
+            var entity = entityResponse.Value;
+
+            string servername = "";
+
+            if (entity.TryGetValue("ServerName", out var serverObj))
+            {
+                servername = serverObj?.ToString() ?? "";
+            }
+
+            return (servername);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Warning: Could not read ServerName from table storage. {ex.Message}");
+            return ("");
         }
     }
 

@@ -93,7 +93,7 @@
                     <p><strong>Received:</strong> @_currentEmail.Metadata.Received.ToLocalTime()</p>
                     <p><strong>Recipient User:</strong> @_currentEmail.Metadata.RecipientUser</p>
                     <hr />
-                    <pre style="white-space:pre-wrap; font-size:0.82rem; line-height:1.15rem;">@_currentEmail.RawEml</pre>
+                    <pre style="white-space:pre-wrap; font-size:0.82rem; line-height:1.15rem;">@_currentBody</pre>
                 </div>
             }
         </div>
@@ -113,6 +113,8 @@
     private bool _settingsLoaded;
     private string? _settingsError;
     private string? _allowedRecipient;
+
+    private string? _currentBody;
 
     private string DisplaySubject(string? subject) => string.IsNullOrWhiteSpace(subject) ? "(no subject)" : subject!;
 
@@ -167,6 +169,7 @@
         _selectedRecipient = folder;
         _messages = null;
         _currentEmail = null;
+        _currentBody = null;
         _selectedMessageId = null;
         _isLoadingMessages = true;
         StateHasChanged();
@@ -194,17 +197,38 @@
     {
         _selectedMessageId = id;
         _currentEmail = null;
+        _currentBody = null;
         _isLoadingContent = true;
         StateHasChanged();
         try
         {
             _currentEmail = await EmailService.GetEmailAsync(id);
+            _currentBody = _currentEmail is null ? null : ExtractBody(_currentEmail.RawEml);
         }
         finally
         {
             _isLoadingContent = false;
             StateHasChanged();
         }
+    }
+
+    private static string ExtractBody(string raw)
+    {
+        if (string.IsNullOrEmpty(raw)) return string.Empty;
+        // Normalize line endings
+        var text = raw.Replace("\r\n", "\n");
+        // First blank line ends custom headers, second ends original RFC headers
+        var first = text.IndexOf("\n\n");
+        if (first < 0) return raw; // no headers detected
+        var afterFirst = first + 2;
+        var second = text.IndexOf("\n\n", afterFirst);
+        if (second < 0)
+        {
+            // If only one header block, treat remainder as body
+            return text.Substring(afterFirst).Replace('\n', '\n');
+        }
+        var body = text.Substring(second + 2);
+        return body;
     }
 
     private void DownloadCurrent()
@@ -230,6 +254,7 @@
                 if (_currentEmail?.Metadata.BlobName == item.BlobName)
                 {
                     _currentEmail = null;
+                    _currentBody = null;
                     _selectedMessageId = null;
                     StateHasChanged();
                 }

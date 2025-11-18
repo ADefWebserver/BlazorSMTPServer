@@ -8,97 +8,113 @@
 @inject IWebHostEnvironment Env
 
 <div class="container py-4">
-    <div class="row justify-content-center">
-        <div class="col-12 col-lg-10">
-            @if (!string.IsNullOrEmpty(Error))
-            {
-                <div class="alert alert-danger" role="alert">@Error</div>
-            }
-            @if (Saved)
-            {
-                <div class="alert alert-success" role="alert">Saved.</div>
-            }
-            <div class="card shadow-sm">
-                <div class="card-header">
-                    <h1 class="h4 mb-0">SMTP Settings</h1>
-                </div>
-                <div class="card-body">                  
+    <RadzenTabs>
+        <Tabs>
+            <RadzenTabsItem Text="SMTP Server">
+                <div class="row justify-content-center">
+                    <div class="col-12 col-lg-10">
+                        @if (!string.IsNullOrEmpty(Error))
+                        {
+                            <div class="alert alert-danger" role="alert">@Error</div>
+                        }
+                        @if (Saved)
+                        {
+                            <div class="alert alert-success" role="alert">Saved.</div>
+                        }
+                        <div class="card shadow-sm">
+                            <div class="card-header">
+                                <h1 class="h4 mb-0">SMTP Settings</h1>
+                            </div>
+                            <div class="card-body">
+                                @if (IsLoading)
+                                {
+                                    <div class="d-flex align-items-center gap-2 text-muted">
+                                        <div class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></div>
+                                        <span>Loading settings…</span>
+                                    </div>
+                                }
+                                else
+                                {
+                                    <div class="row g-3">
+                                        <div class="col-12 col-md-6">
+                                            <label class="form-label" for="serverName">Server Name</label>
+                                            <input id="serverName" class="form-control" type="text" placeholder="smtp.example.com" @bind="ServerName" readonly />
+                                            <div class="form-text">Hostname for the SMTP listener.</div>
+                                        </div>
+                                        <div class="col-12 col-md-6">
+                                            <label class="form-label" for="ports">Ports</label>
+                                            <input id="ports" class="form-control" type="text" placeholder="25, 587" @bind="Ports" readonly />
+                                            <div class="form-text">Comma-separated list of ports to listen on.</div>
+                                        </div>
 
-                    @if (IsLoading)
-                    {
-                        <div class="d-flex align-items-center gap-2 text-muted">
-                            <div class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></div>
-                            <span>Loading settings…</span>
+                                        <div class="col-12 col-md-6">
+                                            <label class="form-label" for="allowedRecipient">Allowed Recipient</label>
+                                            <input id="allowedRecipient" class="form-control" type="email" placeholder="user@example.com" @bind="AllowedRecipient" readonly />
+                                            <div class="form-text">Only accept mail where this is the recipient.</div>
+                                        </div>
+                                        <div class="col-12 col-md-6">
+                                            <label class="form-label" for="allowedUsername">Allowed Username</label>
+                                            <input id="allowedUsername" class="form-control" type="text" placeholder="username" @bind="AllowedUsername" readonly />
+                                            <div class="form-text">SMTP auth username.</div>
+                                        </div>
+                                        <div class="col-12 col-md-6">
+                                            <label class="form-label" for="allowedPassword">Allowed Password</label>
+                                            <div class="input-group">
+                                                <input id="allowedPassword" class="form-control" autocomplete="new-password" type="@(ShowAllowedPassword ? "text" : "password")" placeholder="Password" @bind="AllowedPassword" readonly />
+                                                <button class="btn btn-outline-secondary" type="button" @onclick="() => ShowAllowedPassword = !ShowAllowedPassword">@(ShowAllowedPassword ? "Hide" : "Show")</button>
+                                            </div>
+                                            <div class="form-text">SMTP auth password (read-only; loaded from table).</div>
+                                        </div>
+                                        <div class="col-12 col-md-6">
+                                            <label class="form-label" for="spamhausKey">Spamhaus Key</label>
+                                            <div class="input-group">
+                                                <input id="spamhausKey" class="form-control" autocomplete="off" type="@(ShowSpamhausKey ? "text" : "password")" placeholder="(not set)" @bind="SpamhausKey" readonly />
+                                                <button class="btn btn-outline-secondary" type="button" @onclick="() => ShowSpamhausKey = !ShowSpamhausKey">@(ShowSpamhausKey ? "Hide" : "Show")</button>
+                                            </div>
+                                            <div class="form-text">Spamhaus API key (read-only; user secrets override appsettings).</div>
+                                        </div>
+                                    </div>
+                                }
+                            </div>
                         </div>
-                    }
-                    else
-                    {
-                        
-                            <div class="row g-3">
-                                <div class="col-12 col-md-6">
-                                    <label class="form-label" for="serverName">Server Name</label>
-                                    <input id="serverName" class="form-control" type="text" placeholder="smtp.example.com" @bind="ServerName" readonly />
-                                    <div class="form-text">Hostname for the SMTP listener.</div>
+                        <form @onsubmit="SaveAsync" @onsubmit:preventDefault="true">
+                            <div class="mt-4 p-3 border rounded">
+                                <label class="form-label" for="appPassword">App Access Password</label>
+                                <div class="input-group mb-2">
+                                    <input id="appPassword" class="form-control" autocomplete="new-password" type="@(ShowAppPassword ? "text" : "password")" placeholder="Leave blank to disable app auth" @bind="AppPassword" />
+                                    <button class="btn btn-outline-secondary" type="button" @onclick="() => ShowAppPassword = !ShowAppPassword">@(ShowAppPassword ? "Hide" : "Show")</button>
                                 </div>
-                                <div class="col-12 col-md-6">
-                                    <label class="form-label" for="ports">Ports</label>
-                                    <input id="ports" class="form-control" type="text" placeholder="25, 587" @bind="Ports" readonly />
-                                    <div class="form-text">Comma-separated list of ports to listen on.</div>
-                                </div>
+                                <div class="form-text mb-2">Protects access to this UI. Blank means open access. (Stored in appsettings.json)</div>
 
-                                <div class="col-12 col-md-6">
-                                    <label class="form-label" for="allowedRecipient">Allowed Recipient</label>
-                                    <input id="allowedRecipient" class="form-control" type="email" placeholder="user@example.com" @bind="AllowedRecipient" readonly />
-                                    <div class="form-text">Only accept mail where this is the recipient.</div>
-                                </div>
-                                <div class="col-12 col-md-6">
-                                    <label class="form-label" for="allowedUsername">Allowed Username</label>
-                                    <input id="allowedUsername" class="form-control" type="text" placeholder="username" @bind="AllowedUsername" readonly />
-                                    <div class="form-text">SMTP auth username.</div>
-                                </div>
-                                <div class="col-12 col-md-6">
-                                    <label class="form-label" for="allowedPassword">Allowed Password</label>
-                                    <div class="input-group">
-                                        <input id="allowedPassword" class="form-control" autocomplete="new-password" type="@(ShowPasswords ? "text" : "password")" placeholder="Password" @bind="AllowedPassword" readonly />
-                                        <button class="btn btn-outline-secondary" type="button" @onclick="() => ShowPasswords = !ShowPasswords">@(ShowPasswords ? "Hide" : "Show")</button>
-                                    </div>
-                                    <div class="form-text">SMTP auth password (read-only; loaded from table).</div>
-                                </div>
-                                <div class="col-12 col-md-6">
-                                    <label class="form-label" for="spamhausKey">Spamhaus Key</label>
-                                    <div class="input-group">
-                                        <input id="spamhausKey" class="form-control" autocomplete="off" type="@(ShowPasswords ? "text" : "password")" placeholder="(not set)" @bind="SpamhausKey" readonly />
-                                        <button class="btn btn-outline-secondary" type="button" @onclick="() => ShowPasswords = !ShowPasswords">@(ShowPasswords ? "Hide" : "Show")</button>
-                                    </div>
-                                    <div class="form-text">Spamhaus API key (read-only; user secrets override appsettings).</div>
+                                <div class="d-flex align-items-center gap-2">
+                                    <button type="submit" class="btn btn-primary" disabled="@(Saving || IsLoading)">
+                                        @if (Saving)
+                                        {
+                                            <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                                        }
+                                        Save
+                                    </button>
+                                    <button type="button" class="btn btn-outline-secondary" @onclick="ResetAsync" disabled="@(Saving || IsLoading)">Reset</button>
                                 </div>
                             </div>
-                    }
-                </div>
-            </div>
-            <form @onsubmit="SaveAsync" @onsubmit:preventDefault="true">
-                <div class="mt-4 p-3 border rounded">
-                    <label class="form-label" for="appPassword">App Access Password</label>
-                    <div class="input-group mb-2">
-                        <input id="appPassword" class="form-control" autocomplete="new-password" type="@(ShowPasswords ? "text" : "password")" placeholder="Leave blank to disable app auth" @bind="AppPassword" />
-                        <button class="btn btn-outline-secondary" type="button" @onclick="() => ShowPasswords = !ShowPasswords">@(ShowPasswords ? "Hide" : "Show")</button>
+                        </form>
                     </div>
-                    <div class="form-text mb-2">Protects access to this UI. Blank means open access. (Stored in appsettings.json)</div>
+                </div>
+            </RadzenTabsItem>
 
-                    <div class="d-flex align-items-center gap-2">
-                        <button type="submit" class="btn btn-primary" disabled="@(Saving || IsLoading)">
-                            @if (Saving)
-                            {
-                                <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
-                            }
-                            Save
-                        </button>
-                        <button type="button" class="btn btn-outline-secondary" @onclick="ResetAsync" disabled="@(Saving || IsLoading)">Reset</button>
-                    </div>
-                </div>
-            </form>
-        </div>
-    </div>
+            <RadzenTabsItem Text="DNS">
+                <div class="p-3 text-muted">DNS configuration guidance or settings can be added here.</div>
+            </RadzenTabsItem>
+
+            <RadzenTabsItem Text="SPAM">
+                <div class="p-3 text-muted">Spam filtering and related settings can be added here.</div>
+            </RadzenTabsItem>
+
+            <RadzenTabsItem Text="SPF/DMARC/DKIM">
+                <div class="p-3 text-muted">SPF, DMARC, and DKIM records and validation tools can be added here.</div>
+            </RadzenTabsItem>
+        </Tabs>
+    </RadzenTabs>
 </div>
 
 @code {
@@ -109,7 +125,7 @@
     string? ServerName; string? Ports; string? AllowedRecipient; string? AllowedUsername; string? AllowedPassword; string? AppPassword; string? SpamhausKey;
     bool Saved; string? Error;
 
-    bool IsLoading; bool Saving; bool ShowPasswords;
+    bool IsLoading; bool Saving; bool ShowAllowedPassword; bool ShowSpamhausKey; bool ShowAppPassword;
 
     protected override async Task OnInitializedAsync()
     {

@@ -73,6 +73,30 @@
                                             </div>
                                             <div class="form-text">Spamhaus API key (read-only; user secrets override appsettings).</div>
                                         </div>
+                                        <div class="col-12 col-md-6">
+                                            <label class="form-label" for="spamhausAccount">Spamhaus Account</label>
+                                            <input id="spamhausAccount" class="form-control" type="text" placeholder="(not set)" @bind="SpamhausAccount" readonly />
+                                            <div class="form-text">Optional Spamhaus account identifier.</div>
+                                        </div>
+
+                                        <div class="col-12">
+                                            <div class="form-check form-switch">
+                                                <input class="form-check-input" type="checkbox" id="enableSpamFilter" @bind="EnableSpamFiltering" disabled />
+                                                <label class="form-check-label" for="enableSpamFilter">Enable Spam Filtering</label>
+                                            </div>
+                                            <div class="form-check form-switch mt-2">
+                                                <input class="form-check-input" type="checkbox" id="enableSpf" @bind="EnableSpfCheck" disabled />
+                                                <label class="form-check-label" for="enableSpf">Enable SPF Check</label>
+                                            </div>
+                                            <div class="form-check form-switch mt-2">
+                                                <input class="form-check-input" type="checkbox" id="enableDmarc" @bind="EnableDmarcCheck" disabled />
+                                                <label class="form-check-label" for="enableDmarc">Enable DMARC Check</label>
+                                            </div>
+                                            <div class="form-check form-switch mt-2">
+                                                <input class="form-check-input" type="checkbox" id="enableDkim" @bind="EnableDkimCheck" disabled />
+                                                <label class="form-check-label" for="enableDkim">Enable DKIM Check</label>
+                                            </div>
+                                        </div>
                                     </div>
                                 }
                             </div>
@@ -122,10 +146,12 @@
     const string PK = "SmtpServer";
     const string RKSettings = "Current";
 
-    string? ServerName; string? Ports; string? AllowedRecipient; string? AllowedUsername; string? AllowedPassword; string? AppPassword; string? SpamhausKey;
+    string? ServerName; string? Ports; string? AllowedRecipient; string? AllowedUsername; string? AllowedPassword; string? AppPassword; string? SpamhausKey; string? SpamhausAccount;
     bool Saved; string? Error;
 
     bool IsLoading; bool Saving; bool ShowAllowedPassword; bool ShowSpamhausKey; bool ShowAppPassword;
+
+    bool EnableSpamFiltering; bool EnableSpfCheck; bool EnableDmarcCheck; bool EnableDkimCheck;
 
     protected override async Task OnInitializedAsync()
     {
@@ -153,6 +179,13 @@
                 {
                     SpamhausKey = settings.Value?.GetString("SpamhausKey");
                 }
+
+                SpamhausAccount = settings.Value?.GetString("SpamhausAccount");
+
+                EnableSpamFiltering = settings.Value?.GetBoolean("EnableSpamFiltering") ?? false;
+                EnableSpfCheck = settings.Value?.GetBoolean("EnableSpfCheck") ?? false;
+                EnableDmarcCheck = settings.Value?.GetBoolean("EnableDmarcCheck") ?? false;
+                EnableDkimCheck = settings.Value?.GetBoolean("EnableDkimCheck") ?? false;
             }
             // Load only app password from configuration
             AppPassword = Config["AppPassword"];

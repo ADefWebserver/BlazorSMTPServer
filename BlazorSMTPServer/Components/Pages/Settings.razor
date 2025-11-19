@@ -49,7 +49,7 @@
 
                         <div class="card shadow-sm">
                             <div class="card-header">
-                                <h2 class="h5 mb-0">SMTP Settings</h2>
+                                <h2 class="h5 mb-0">SMTP Settings (Read Only)</h2>
                             </div>
                             <div class="card-body">
                                 @if (IsLoading)
@@ -90,7 +90,7 @@
                                                 <input id="allowedPassword" class="form-control" autocomplete="new-password" type="@(ShowAllowedPassword ? "text" : "password")" placeholder="Password" @bind="AllowedPassword" readonly />
                                                 <button class="btn btn-outline-secondary" type="button" @onclick="() => ShowAllowedPassword = !ShowAllowedPassword">@(ShowAllowedPassword ? "Hide" : "Show")</button>
                                             </div>
-                                            <div class="form-text">SMTP auth password (read-only; loaded from table).</div>
+                                            <div class="form-text">SMTP auth password.</div>
                                         </div>
                                         <div class="col-12 col-md-6">
                                             <label class="form-label" for="spamhausKey">Spamhaus Key</label>
@@ -98,7 +98,7 @@
                                                 <input id="spamhausKey" class="form-control" autocomplete="off" type="@(ShowSpamhausKey ? "text" : "password")" placeholder="(not set)" @bind="SpamhausKey" readonly />
                                                 <button class="btn btn-outline-secondary" type="button" @onclick="() => ShowSpamhausKey = !ShowSpamhausKey">@(ShowSpamhausKey ? "Hide" : "Show")</button>
                                             </div>
-                                            <div class="form-text">Spamhaus API key (read-only; user secrets override appsettings).</div>
+                                            <div class="form-text">Spamhaus API key.</div>
                                         </div>
 
                                         <div class="col-12">

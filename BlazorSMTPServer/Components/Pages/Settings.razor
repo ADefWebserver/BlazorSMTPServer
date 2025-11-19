@@ -21,9 +21,35 @@
                         {
                             <div class="alert alert-success" role="alert">Saved.</div>
                         }
+
+                        <form @onsubmit="SaveAsync" @onsubmit:preventDefault="true">
+                            <div class="card shadow-sm mb-4">
+                                <div class="card-header">
+                                    <h1 class="h5 mb-0">App Access Password</h1>
+                                </div>
+                                <div class="card-body">
+                                    <div class="input-group mb-2">
+                                        <input id="appPassword" class="form-control" autocomplete="new-password" type="@(ShowAppPassword ? "text" : "password")" placeholder="Leave blank to disable app auth" @bind="AppPassword" />
+                                        <button class="btn btn-outline-secondary" type="button" @onclick="() => ShowAppPassword = !ShowAppPassword">@(ShowAppPassword ? "Hide" : "Show")</button>
+                                    </div>
+                                    <div class="form-text mb-3">Protects access to this UI. Blank means open access. (Stored in appsettings.json)</div>
+                                    <div class="d-flex align-items-center gap-2">
+                                        <button type="submit" class="btn btn-primary" disabled="@(Saving || IsLoading)">
+                                            @if (Saving)
+                                            {
+                                                <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                                            }
+                                            Save
+                                        </button>
+                                        <button type="button" class="btn btn-outline-secondary" @onclick="ResetAsync" disabled="@(Saving || IsLoading)">Reset</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </form>
+
                         <div class="card shadow-sm">
                             <div class="card-header">
-                                <h1 class="h4 mb-0">SMTP Settings</h1>
+                                <h2 class="h5 mb-0">SMTP Settings</h2>
                             </div>
                             <div class="card-body">
                                 @if (IsLoading)
@@ -57,6 +83,7 @@
                                             <input id="allowedUsername" class="form-control" type="text" placeholder="username" @bind="AllowedUsername" readonly />
                                             <div class="form-text">SMTP auth username.</div>
                                         </div>
+
                                         <div class="col-12 col-md-6">
                                             <label class="form-label" for="allowedPassword">Allowed Password</label>
                                             <div class="input-group">
@@ -73,55 +100,31 @@
                                             </div>
                                             <div class="form-text">Spamhaus API key (read-only; user secrets override appsettings).</div>
                                         </div>
-                                        <div class="col-12 col-md-6">
-                                            <label class="form-label" for="spamhausAccount">Spamhaus Account</label>
-                                            <input id="spamhausAccount" class="form-control" type="text" placeholder="(not set)" @bind="SpamhausAccount" readonly />
-                                            <div class="form-text">Optional Spamhaus account identifier.</div>
-                                        </div>
 
                                         <div class="col-12">
-                                            <div class="form-check form-switch">
-                                                <input class="form-check-input" type="checkbox" id="enableSpamFilter" @bind="EnableSpamFiltering" disabled />
-                                                <label class="form-check-label" for="enableSpamFilter">Enable Spam Filtering</label>
-                                            </div>
-                                            <div class="form-check form-switch mt-2">
-                                                <input class="form-check-input" type="checkbox" id="enableSpf" @bind="EnableSpfCheck" disabled />
-                                                <label class="form-check-label" for="enableSpf">Enable SPF Check</label>
-                                            </div>
-                                            <div class="form-check form-switch mt-2">
-                                                <input class="form-check-input" type="checkbox" id="enableDmarc" @bind="EnableDmarcCheck" disabled />
-                                                <label class="form-check-label" for="enableDmarc">Enable DMARC Check</label>
-                                            </div>
-                                            <div class="form-check form-switch mt-2">
-                                                <input class="form-check-input" type="checkbox" id="enableDkim" @bind="EnableDkimCheck" disabled />
-                                                <label class="form-check-label" for="enableDkim">Enable DKIM Check</label>
+                                            <div class="d-flex flex-wrap gap-4 mt-2">
+                                                <div class="form-check form-switch">
+                                                    <input class="form-check-input" type="checkbox" id="enableSpamFilter" @bind="EnableSpamFiltering" disabled />
+                                                    <label class="form-check-label" for="enableSpamFilter">Enable Spam Filtering</label>
+                                                </div>
+                                                <div class="form-check form-switch">
+                                                    <input class="form-check-input" type="checkbox" id="enableDmarc" @bind="EnableDmarcCheck" disabled />
+                                                    <label class="form-check-label" for="enableDmarc">Enable DMARC Check</label>
+                                                </div>
+                                                <div class="form-check form-switch">
+                                                    <input class="form-check-input" type="checkbox" id="enableSpf" @bind="EnableSpfCheck" disabled />
+                                                    <label class="form-check-label" for="enableSpf">Enable SPF Check</label>
+                                                </div>
+                                                <div class="form-check form-switch">
+                                                    <input class="form-check-input" type="checkbox" id="enableDkim" @bind="EnableDkimCheck" disabled />
+                                                    <label class="form-check-label" for="enableDkim">Enable DKIM Check</label>
+                                                </div>
                                             </div>
                                         </div>
                                     </div>
                                 }
                             </div>
                         </div>
-                        <form @onsubmit="SaveAsync" @onsubmit:preventDefault="true">
-                            <div class="mt-4 p-3 border rounded">
-                                <label class="form-label" for="appPassword">App Access Password</label>
-                                <div class="input-group mb-2">
-                                    <input id="appPassword" class="form-control" autocomplete="new-password" type="@(ShowAppPassword ? "text" : "password")" placeholder="Leave blank to disable app auth" @bind="AppPassword" />
-                                    <button class="btn btn-outline-secondary" type="button" @onclick="() => ShowAppPassword = !ShowAppPassword">@(ShowAppPassword ? "Hide" : "Show")</button>
-                                </div>
-                                <div class="form-text mb-2">Protects access to this UI. Blank means open access. (Stored in appsettings.json)</div>
-
-                                <div class="d-flex align-items-center gap-2">
-                                    <button type="submit" class="btn btn-primary" disabled="@(Saving || IsLoading)">
-                                        @if (Saving)
-                                        {
-                                            <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
-                                        }
-                                        Save
-                                    </button>
-                                    <button type="button" class="btn btn-outline-secondary" @onclick="ResetAsync" disabled="@(Saving || IsLoading)">Reset</button>
-                                </div>
-                            </div>
-                        </form>
                     </div>
                 </div>
             </RadzenTabsItem>

@@ -2,5 +2,6 @@
   <Project Path="BlazorSMTPServer.AppHost/BlazorSMTPServer.AppHost.csproj" />
   <Project Path="BlazorSMTPServer.ServiceDefaults/BlazorSMTPServer.ServiceDefaults.csproj" />
   <Project Path="BlazorSMTPServer/BlazorSMTPServer.csproj" />
+  <Project Path="SMTPServerSvc.Tests/SMTPServerSvc.Tests.csproj" />
   <Project Path="SMTPServerSvc/SMTPServerSvc.csproj" />
 </Solution>

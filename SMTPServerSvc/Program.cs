@@ -41,6 +41,8 @@ internal class Program
 
         builder.Services.AddSingleton(smtpConfig);
 
+        builder.Services.AddSingleton<IDnsResolver, DnsResolver>();
+
         // Custom logger provider (table name comes from config)
         builder.Services.AddSingleton<TableStorageLoggerProvider>(sp =>
         {

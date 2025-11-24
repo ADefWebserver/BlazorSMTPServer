@@ -59,23 +59,19 @@ public class SampleMailboxFilter : IMailboxFilter
             return true;
         }
 
-        // Perform Spamhaus Check if key is present OR public mirror is enabled
-        if (!string.IsNullOrWhiteSpace(_configuration.SpamhausKey) || _configuration.UsePublicSpamhausMirror)
+        if (context.Properties.TryGetValue("RemoteEndPoint", out var endpointObj) && endpointObj is IPEndPoint ipEndPoint)
         {
-            if (context.Properties.TryGetValue("RemoteEndPoint", out var endpointObj) && endpointObj is IPEndPoint ipEndPoint)
+            var ipAddress = ipEndPoint.Address;
+            // Only check IPv4 for Zen (IPv6 is supported but requires different handling/zones usually)
+            if (ipAddress.AddressFamily == AddressFamily.InterNetwork)
             {
-                var ipAddress = ipEndPoint.Address;
-                // Only check IPv4 for Zen (IPv6 is supported but requires different handling/zones usually)
-                if (ipAddress.AddressFamily == AddressFamily.InterNetwork)
+                bool isListed = await CheckSpamhausAsync(ipAddress, _configuration.SpamhausKey);
+                if (isListed)
                 {
-                    bool isListed = await CheckSpamhausAsync(ipAddress, _configuration.SpamhausKey);
-                    if (isListed)
-                    {
-                        _logger.LogWarning("Detected spam from {FromAddress} (IP: {IP}) - Listed in Spamhaus. Tagging session as spam.", fromAddress, ipAddress);
-                        // Tag the session as spam instead of rejecting
-                        context.Properties["IsSpam"] = true;
-                        return true;
-                    }
+                    _logger.LogWarning("Detected spam from {FromAddress} (IP: {IP}) - Listed in Spamhaus. Tagging session as spam.", fromAddress, ipAddress);
+                    // Tag the session as spam instead of rejecting
+                    context.Properties["IsSpam"] = true;
+                    return true;
                 }
             }
         }

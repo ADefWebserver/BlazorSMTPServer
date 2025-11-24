@@ -119,7 +119,11 @@ internal class Program
                 { "AllowedRecipient", cfg.AllowedRecipient ?? string.Empty },
                 { "AllowedUsername", cfg.AllowedUsername ?? string.Empty },
                 { "AllowedPassword", cfg.AllowedPassword ?? string.Empty },
-                { "SpamhausKey", cfg.SpamhausKey ?? string.Empty }
+                { "SpamhausKey", cfg.SpamhausKey ?? string.Empty },
+                { "EnableSpamFiltering", cfg.EnableSpamFiltering },
+                { "EnableSpfCheck", cfg.EnableSpfCheck },
+                { "EnableDmarcCheck", cfg.EnableDmarcCheck },
+                { "EnableDkimCheck", cfg.EnableDkimCheck }
             };
 
             await table.UpsertEntityAsync(entity);

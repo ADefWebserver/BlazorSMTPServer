@@ -21,7 +21,7 @@ public class SampleMailboxFilterTests
     {
         _mockLogger = new Mock<ILogger<SampleMailboxFilter>>();
         _mockDnsResolver = new Mock<IDnsResolver>();
-        _config = new SmtpServerConfiguration { SpamhausKey = "testkey", ServerName = "test.com", AllowedRecipient = "allowed" };
+        _config = new SmtpServerConfiguration { SpamhausKey = "", ServerName = "test.com", AllowedRecipient = "allowed" };
         _memoryCache = new MemoryCache(new MemoryCacheOptions());
     }
 

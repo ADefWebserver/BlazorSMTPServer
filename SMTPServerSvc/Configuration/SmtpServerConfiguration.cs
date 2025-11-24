@@ -41,4 +41,10 @@ public class SmtpServerConfiguration
     /// Optional Spamhaus API key used for spam checks
     /// </summary>
     public string SpamhausKey { get; set; } = string.Empty;
+
+    /// <summary>
+    /// If true, use the public Spamhaus mirror (zen.spamhaus.org) when no key is provided.
+    /// CAUTION: Public mirror has usage limits and policy restrictions.
+    /// </summary>
+    public bool UsePublicSpamhausMirror { get; set; } = false;
 }

@@ -1,3 +1,4 @@
+using Azure.Data.Tables;
 using Azure.Storage.Blobs;
 using Microsoft.Extensions.Logging;
 using SmtpServer;
@@ -15,14 +16,14 @@ namespace SMTPServerSvc.Services;
 /// </summary>
 public class SampleMessageStore : MessageStore
 {
-    // Fix: Mark fields as nullable to resolve CS8618
     private readonly BlobServiceClient? _blobServiceClient;
     private readonly BlobContainerClient? _containerClient;
+    private readonly TableClient? _spamLogTableClient;
     private readonly ILogger<SampleMessageStore> _logger;
     private readonly string _containerName;
     private readonly bool _isAvailable;
 
-    public SampleMessageStore(BlobServiceClient blobServiceClient, SmtpServerConfiguration configuration, ILogger<SampleMessageStore> logger)
+    public SampleMessageStore(BlobServiceClient blobServiceClient, TableServiceClient tableServiceClient, SmtpServerConfiguration configuration, ILogger<SampleMessageStore> logger)
     {
         _blobServiceClient = blobServiceClient;
         _logger = logger;
@@ -30,27 +31,25 @@ public class SampleMessageStore : MessageStore
 
         try
         {
-            _logger.LogInformation("Initializing SampleMessageStore with Aspire-managed BlobServiceClient");
-            _logger.LogInformation("  Blob Service URI: {BlobUri}", _blobServiceClient.Uri);
-            _logger.LogInformation("  Container Name: {ContainerName}", _containerName);
+            _logger.LogInformation("Initializing SampleMessageStore with Aspire-managed clients");
 
             // Create container for email messages
             _containerClient = _blobServiceClient.GetBlobContainerClient(_containerName);
-            
-            // Test connectivity and create container
             _containerClient.CreateIfNotExists();
+
+            // Initialize spam logs table
+            _spamLogTableClient = tableServiceClient.GetTableClient("spamlogs");
+            _spamLogTableClient.CreateIfNotExists();
+
             _isAvailable = true;
-            
-            _logger.LogInformation("SampleMessageStore initialized successfully with container: {ContainerName}", _containerName);
+
+            _logger.LogInformation("SampleMessageStore initialized successfully");
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to initialize blob storage. Messages will be logged but not stored.");
-            _logger.LogWarning("  Blob Service URI: {BlobUri}", _blobServiceClient?.Uri?.ToString() ?? "NULL");
-            _logger.LogWarning("  Container Name: {ContainerName}", _containerName);
-            _logger.LogWarning("  Error: {ErrorMessage}", ex.Message);
-            
+            _logger.LogWarning(ex, "Failed to initialize storage. Messages will be logged but not stored.");
             _containerClient = null!;
+            _spamLogTableClient = null;
             _isAvailable = false;
         }
     }
@@ -61,21 +60,29 @@ public class SampleMessageStore : MessageStore
         {
             var sessionId = context.Properties.ContainsKey("SessionId") ? context.Properties["SessionId"] : "unknown";
             var transactionId = transaction.GetHashCode().ToString();
-            
-            _logger.LogInformation("Saving message for session {SessionId}, transaction {TransactionId}, size {MessageSize} bytes", 
-                sessionId, transactionId, buffer.Length);
+
+            // Check for spam tag
+            bool isSpam = context.Properties.ContainsKey("IsSpam") && (bool)context.Properties["IsSpam"];
+            var targetContainer = isSpam ? "spam-messages" : _containerName;
+
+            _logger.LogInformation("Saving message for session {SessionId}, transaction {TransactionId}, size {MessageSize} bytes. IsSpam: {IsSpam}",
+                sessionId, transactionId, buffer.Length, isSpam);
 
             // If blob storage is not available, log message content and return success
             if (!_isAvailable || _containerClient == null)
             {
                 _logger.LogWarning("Blob storage unavailable. Message content will be logged only:");
-                
+
                 // Convert buffer to string for logging
                 var logMessageContent = Encoding.UTF8.GetString(buffer.ToArray());
                 _logger.LogInformation("Message Content (Session {SessionId}):\n{MessageContent}", sessionId, logMessageContent);
-                
+
                 return SmtpResponse.Ok; // Still return OK to not break SMTP flow
             }
+
+            // Get the correct container client
+            var containerClient = isSpam ? _blobServiceClient!.GetBlobContainerClient(targetContainer) : _containerClient;
+            await containerClient.CreateIfNotExistsAsync(cancellationToken: cancellationToken);
 
             // Determine recipient user folder (first recipient)
             string recipientUser = "unknown";
@@ -91,22 +98,6 @@ public class SampleMessageStore : MessageStore
 
             // Sanitize recipient for use as a blob virtual folder
             string recipientFolder = SanitizeForBlobPath(recipientUser);
-
-            // Ensure a per-user folder (virtual) by creating a placeholder blob if it doesn't exist
-            var keepBlob = _containerClient.GetBlobClient($"{recipientFolder}/.keep");
-            try
-            {
-                if (!await keepBlob.ExistsAsync(cancellationToken))
-                {
-                    using var empty = new MemoryStream(Array.Empty<byte>());
-                    await keepBlob.UploadAsync(empty, cancellationToken: cancellationToken);
-                }
-            }
-            catch (Exception ex)
-            {
-                // Non-fatal; continue with message upload
-                _logger.LogDebug(ex, "Failed to ensure placeholder for folder {Folder}", recipientFolder);
-            }
 
             // Generate unique blob name with timestamp
             var timestamp = DateTime.UtcNow.ToString("yyyy-MM-dd_HH-mm-ss-fff");
@@ -135,7 +126,7 @@ public class SampleMessageStore : MessageStore
 
             var originalSubject = HeaderFromOriginal(messageContent, "Subject") ?? "(no subject)";
             var originalFrom = HeaderFromOriginal(messageContent, "From") ?? string.Empty;
-            
+
             // Add metadata preamble (custom headers) followed by a blank line, then original message content
             var enhancedContent = new StringBuilder();
             enhancedContent.AppendLine($"X-SMTP-Server-Received: {DateTime.UtcNow:R}");
@@ -143,12 +134,13 @@ public class SampleMessageStore : MessageStore
             enhancedContent.AppendLine($"X-SMTP-Server-Transaction: {transactionId}");
             enhancedContent.AppendLine($"X-SMTP-Server-BlobName: {blobPath}");
             enhancedContent.AppendLine($"X-SMTP-Server-Recipient-User: {recipientUser}");
+            if (isSpam) enhancedContent.AppendLine("X-SMTP-Server-Spam: True");
             enhancedContent.AppendLine();
             enhancedContent.Append(messageContent);
 
             // Upload to blob storage under the per-user folder
-            var blobClient = _containerClient.GetBlobClient(blobPath);
-            
+            var blobClient = containerClient.GetBlobClient(blobPath);
+
             using var stream = new MemoryStream(Encoding.UTF8.GetBytes(enhancedContent.ToString()));
             await blobClient.UploadAsync(stream, overwrite: true, cancellationToken);
 
@@ -159,23 +151,29 @@ public class SampleMessageStore : MessageStore
                 ["TransactionId"] = transactionId,
                 ["ReceivedAt"] = DateTime.UtcNow.ToString("O"),
                 ["MessageSize"] = buffer.Length.ToString(),
-                ["ContainerName"] = _containerName,
+                ["ContainerName"] = targetContainer,
                 ["RecipientUser"] = recipientUser,
                 ["Subject"] = originalSubject,
-                ["From"] = originalFrom
+                ["From"] = originalFrom,
+                ["IsSpam"] = isSpam.ToString()
             };
 
             await blobClient.SetMetadataAsync(metadata, cancellationToken: cancellationToken);
 
-            _logger.LogInformation("Message saved successfully to blob {BlobName} in container {ContainerName}, size {MessageSize} bytes", 
-                blobPath, _containerName, buffer.Length);
+            _logger.LogInformation("Message saved successfully to blob {BlobName} in container {ContainerName}, size {MessageSize} bytes",
+                blobPath, targetContainer, buffer.Length);
+
+            if (isSpam)
+            {
+                await LogSpamAsync(sessionId.ToString(), transactionId, originalFrom, recipientUser, originalSubject, blobPath, ip: "unknown");
+            }
 
             return SmtpResponse.Ok;
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to save message to blob storage. Error: {ErrorMessage}", ex.Message);
-            
+
             // Log the message content as fallback
             try
             {
@@ -186,8 +184,36 @@ public class SampleMessageStore : MessageStore
             {
                 _logger.LogError(logEx, "Failed to log message content as fallback");
             }
-            
+
             return SmtpResponse.Ok; // Return OK to not break SMTP flow, even if storage fails
+        }
+    }
+
+    private async Task LogSpamAsync(string sessionId, string transactionId, string from, string to, string subject, string blobPath, string ip)
+    {
+        if (_spamLogTableClient == null) return;
+
+        try
+        {
+            var entity = new TableEntity
+            {
+                PartitionKey = DateTime.UtcNow.ToString("yyyy-MM-dd"),
+                RowKey = $"{DateTime.UtcNow:HHmmss.fff}_{Guid.NewGuid():N}",
+                ["Timestamp"] = DateTime.UtcNow,
+                ["SessionId"] = sessionId,
+                ["TransactionId"] = transactionId,
+                ["From"] = from,
+                ["To"] = to,
+                ["Subject"] = subject,
+                ["BlobPath"] = blobPath,
+                ["IP"] = ip
+            };
+
+            await _spamLogTableClient.AddEntityAsync(entity);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to log spam entry to table storage");
         }
     }
 

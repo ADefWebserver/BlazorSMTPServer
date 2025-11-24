@@ -51,13 +51,16 @@ internal class Program
             return new TableStorageLoggerProvider(tableSvcClient, "SMTPServerLogs");
         });
 
+        // Register MemoryCache for spam check caching
+        builder.Services.AddMemoryCache();
+
         // SMTP components
         builder.Services.AddSingleton<SampleMessageStore>();
         builder.Services.AddSingleton<IMessageStore>(sp => sp.GetRequiredService<SampleMessageStore>());
         builder.Services.AddSingleton<SampleMailboxFilter>();
         builder.Services.AddSingleton<IMailboxFilter>(sp => sp.GetRequiredService<SampleMailboxFilter>());
         builder.Services.AddSingleton<SampleUserAuthenticator>();
-        builder.Services.AddSingleton<IUserAuthenticator>(sp => sp.GetRequiredService<SampleUserAuthenticator>()); 
+        builder.Services.AddSingleton<IUserAuthenticator>(sp => sp.GetRequiredService<SampleUserAuthenticator>());
         builder.Services.AddHostedService<SmtpServerHostedService>();
 
         var host = builder.Build();

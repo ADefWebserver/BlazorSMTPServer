@@ -2,122 +2,164 @@
 @using Azure.Data.Tables
 @using System.Text.Json
 @using System.Text.Json.Nodes
+@using BlazorSMTPServer.Classes
 @inject TableServiceClient Tables
 @inject ILogger<Settings> Log
 @inject IConfiguration Config
 @inject IWebHostEnvironment Env
 
 <div class="container py-4">
-    <RadzenTabs>
+    <div class="d-flex align-items-center justify-content-between mb-4">
+        <h1 class="h3 mb-0">Settings</h1>
+    </div>
+
+    <RadzenTabs RenderMode="TabRenderMode.Client">
         <Tabs>
-            <RadzenTabsItem Text="SMTP Server">
-                <div class="row justify-content-center">
-                    <div class="col-12 col-lg-10">
-                        @if (!string.IsNullOrEmpty(Error))
-                        {
-                            <div class="alert alert-danger" role="alert">@Error</div>
-                        }
-                        @if (Saved)
-                        {
-                            <div class="alert alert-success" role="alert">Saved.</div>
-                        }
-
-                        <form @onsubmit="SaveAsync" @onsubmit:preventDefault="true">
-                            <div class="card shadow-sm mb-4">
-                                <div class="card-header">
-                                    <h1 class="h5 mb-0">App Access Password</h1>
-                                </div>
-                                <div class="card-body">
-                                    <div class="input-group mb-2">
-                                        <input id="appPassword" class="form-control" autocomplete="new-password" type="@(ShowAppPassword ? "text" : "password")" placeholder="Leave blank to disable app auth" @bind="AppPassword" />
-                                        <button class="btn btn-outline-secondary" type="button" @onclick="() => ShowAppPassword = !ShowAppPassword">@(ShowAppPassword ? "Hide" : "Show")</button>
-                                    </div>
-                                    <div class="form-text mb-3">Protects access to this UI. Blank means open access. (Stored in appsettings.json)</div>
-                                    <div class="d-flex align-items-center gap-2">
-                                        <button type="submit" class="btn btn-primary" disabled="@(Saving || IsLoading)">
-                                            @if (Saving)
-                                            {
-                                                <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
-                                            }
-                                            Save
-                                        </button>
-                                        <button type="button" class="btn btn-outline-secondary" @onclick="ResetAsync" disabled="@(Saving || IsLoading)">Reset</button>
-                                    </div>
-                                </div>
-                            </div>
-                        </form>
-
-                        <div class="card shadow-sm">
-                            <div class="card-header">
-                                <h2 class="h5 mb-0">SMTP Settings (Read Only)</h2>
-                            </div>
+            <RadzenTabsItem Text="General">
+                <div class="row">
+                    <div class="col-12 col-lg-8">
+                        <div class="card shadow-sm mb-4">
                             <div class="card-body">
+                                <h5 class="card-title mb-3">Server Configuration</h5>
                                 @if (IsLoading)
                                 {
-                                    <div class="d-flex align-items-center gap-2 text-muted">
-                                        <div class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></div>
-                                        <span>Loading settings…</span>
+                                    <div class="text-center p-3">
+                                        <div class="spinner-border text-primary" role="status">
+                                            <span class="visually-hidden">Loading...</span>
+                                        </div>
                                     </div>
+                                }
+                                else if (Error != null)
+                                {
+                                    <div class="alert alert-danger">@Error</div>
+                                    <button class="btn btn-outline-primary" @onclick="LoadAsync">Retry</button>
                                 }
                                 else
                                 {
+                                    @if (Saved)
+                                    {
+                                        <div class="alert alert-success alert-dismissible fade show" role="alert">
+                                            Settings saved successfully.
+                                            <button type="button" class="btn-close" data-bs-dismiss="alert"
+                                                aria-label="Close"></button>
+                                        </div>
+                                    }
+
+                                <form @onsubmit="SaveAsync">
                                     <div class="row g-3">
                                         <div class="col-12 col-md-6">
-                                            <label class="form-label" for="serverName">Server Name</label>
-                                            <input id="serverName" class="form-control" type="text" placeholder="smtp.example.com" @bind="ServerName" readonly />
-                                            <div class="form-text">Hostname for the SMTP listener.</div>
+                                            <label class="form-label">Server Name</label>
+                                            <input class="form-control" value="@ServerName" readonly disabled />
+                                            <div class="form-text">Configured in appsettings.json or environment
+                                                variables.</div>
                                         </div>
                                         <div class="col-12 col-md-6">
-                                            <label class="form-label" for="ports">Ports</label>
-                                            <input id="ports" class="form-control" type="text" placeholder="25, 587" @bind="Ports" readonly />
-                                            <div class="form-text">Comma-separated list of ports to listen on.</div>
+                                            <label class="form-label">Ports</label>
+                                            <input class="form-control" value="@Ports" readonly disabled />
                                         </div>
-
-                                        <div class="col-12 col-md-6">
-                                            <label class="form-label" for="allowedRecipient">Allowed Recipient</label>
-                                            <input id="allowedRecipient" class="form-control" type="email" placeholder="user@example.com" @bind="AllowedRecipient" readonly />
-                                            <div class="form-text">Only accept mail where this is the recipient.</div>
-                                        </div>
-                                        <div class="col-12 col-md-6">
-                                            <label class="form-label" for="allowedUsername">Allowed Username</label>
-                                            <input id="allowedUsername" class="form-control" type="text" placeholder="username" @bind="AllowedUsername" readonly />
-                                            <div class="form-text">SMTP auth username.</div>
+                                        <div class="col-12">
+                                            <label class="form-label">Allowed Recipient (Primary)</label>
+                                            <input class="form-control" value="@AllowedRecipient" readonly disabled />
                                         </div>
 
                                         <div class="col-12 col-md-6">
-                                            <label class="form-label" for="allowedPassword">Allowed Password</label>
-                                            <div class="input-group">
-                                                <input id="allowedPassword" class="form-control" autocomplete="new-password" type="@(ShowAllowedPassword ? "text" : "password")" placeholder="Password" @bind="AllowedPassword" readonly />
-                                                <button class="btn btn-outline-secondary" type="button" @onclick="() => ShowAllowedPassword = !ShowAllowedPassword">@(ShowAllowedPassword ? "Hide" : "Show")</button>
-                                            </div>
-                                            <div class="form-text">SMTP auth password.</div>
+                                            <label class="form-label">Auth Username</label>
+                                            <input class="form-control" value="@AllowedUsername" readonly disabled />
                                         </div>
                                         <div class="col-12 col-md-6">
-                                            <label class="form-label" for="spamhausKey">Spamhaus Key</label>
+                                            <label class="form-label">Auth Password</label>
                                             <div class="input-group">
-                                                <input id="spamhausKey" class="form-control" autocomplete="off" type="@(ShowSpamhausKey ? "text" : "password")" placeholder="(not set)" @bind="SpamhausKey" readonly />
-                                                <button class="btn btn-outline-secondary" type="button" @onclick="() => ShowSpamhausKey = !ShowSpamhausKey">@(ShowSpamhausKey ? "Hide" : "Show")</button>
+                                                <input class="form-control"
+                                                    type="@(ShowAllowedPassword ? "text" : "password")"
+                                                    value="@AllowedPassword" readonly disabled />
+                                                <button class="btn btn-outline-secondary" type="button"
+                                                    @onclick="() => ShowAllowedPassword = !ShowAllowedPassword">@(ShowAllowedPassword
+                                                                                                        ? "Hide" : "Show")</button>
                                             </div>
-                                            <div class="form-text">Spamhaus API key.</div>
                                         </div>
 
                                         <div class="col-12">
-                                            <div class="d-flex flex-wrap gap-4 mt-2">
-                                                <div class="form-check form-switch">
-                                                    <input class="form-check-input" type="checkbox" id="enableSpamFilter" @bind="EnableSpamFiltering" disabled />
-                                                    <label class="form-check-label" for="enableSpamFilter">Enable Spam Filtering</label>
+                                            <hr />
+                                            <h6 class="mb-3">Application Settings</h6>
+                                        </div>
+
+                                        <div class="col-12 col-md-6">
+                                            <label class="form-label" for="appPassword">App Password</label>
+                                            <div class="input-group">
+                                                <input id="appPassword" class="form-control" autocomplete="new-password"
+                                                    type="@(ShowAppPassword ? "text" : "password")"
+                                                    placeholder="Enter password to protect this UI"
+                                                    @bind="AppPassword" />
+                                                <button class="btn btn-outline-secondary" type="button"
+                                                    @onclick="() => ShowAppPassword = !ShowAppPassword">@(ShowAppPassword
+                                                                                                        ? "Hide" : "Show")</button>
                                                 </div>
-                                                <div class="form-check form-switch">
-                                                    <input class="form-check-input" type="checkbox" id="enableDmarc" @bind="EnableDmarcCheck" disabled />
-                                                    <label class="form-check-label" for="enableDmarc">Enable DMARC Check</label>
+                                                <div class="form-text mb-3">Protects access to this UI. Blank means open
+                                                    access. (Stored in appsettings.json)</div>
+                                                <div class="d-flex align-items-center gap-2">
+                                                    <button type="submit" class="btn btn-primary"
+                                                        disabled="@(Saving || IsLoading)">
+                                                        @if (Saving)
+                                                        {
+                                                            <span class="spinner-border spinner-border-sm me-2" role="status"
+                                                                aria-hidden="true"></span>
+                                                        }
+                                                    Save
+                                                </button>
+                                                <button type="button" class="btn btn-outline-secondary"
+                                                    @onclick="ResetAsync"
+                                                    disabled="@(Saving || IsLoading)">Reset</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </form>
+
+                                <div class="card shadow-sm mt-4">
+                                    <div class="card-body">
+                                        <h5 class="card-title">Spam Configuration</h5>
+                                        <div class="row g-3">
+                                            <div class="col-12 col-md-6">
+                                                <label class="form-label" for="spamhausKey">Spamhaus Key</label>
+                                                <div class="input-group">
+                                                    <input id="spamhausKey" class="form-control" autocomplete="off"
+                                                        type="@(ShowSpamhausKey ? "text" : "password")"
+                                                        placeholder="(not set)" value="@SpamhausKey" readonly
+                                                        disabled />
+                                                    <button class="btn btn-outline-secondary" type="button"
+                                                        @onclick="() => ShowSpamhausKey = !ShowSpamhausKey">@(ShowSpamhausKey
+                                                                                                                ? "Hide" : "Show")</button>
+                                                    </div>
+                                                    <div class="form-text">Spamhaus API key (Configured in
+                                                        appsettings.json).</div>
                                                 </div>
-                                                <div class="form-check form-switch">
-                                                    <input class="form-check-input" type="checkbox" id="enableSpf" @bind="EnableSpfCheck" disabled />
-                                                    <label class="form-check-label" for="enableSpf">Enable SPF Check</label>
-                                                </div>
-                                                <div class="form-check form-switch">
-                                                    <input class="form-check-input" type="checkbox" id="enableDkim" @bind="EnableDkimCheck" disabled />
-                                                    <label class="form-check-label" for="enableDkim">Enable DKIM Check</label>
+                                                <div class="col-12">
+                                                    <div class="d-flex flex-wrap gap-4 mt-2">
+                                                        <div class="form-check form-switch">
+                                                            <input class="form-check-input" type="checkbox"
+                                                                id="enableSpamFilter" checked="@EnableSpamFiltering"
+                                                                disabled />
+                                                            <label class="form-check-label" for="enableSpamFilter">Enable
+                                                                Spam Filtering</label>
+                                                        </div>
+                                                        <div class="form-check form-switch">
+                                                            <input class="form-check-input" type="checkbox" id="enableDmarc"
+                                                                checked="@EnableDmarcCheck" disabled />
+                                                            <label class="form-check-label" for="enableDmarc">Enable DMARC
+                                                                Check</label>
+                                                        </div>
+                                                        <div class="form-check form-switch">
+                                                            <input class="form-check-input" type="checkbox" id="enableSpf"
+                                                                checked="@EnableSpfCheck" disabled />
+                                                            <label class="form-check-label" for="enableSpf">Enable SPF
+                                                                Check</label>
+                                                        </div>
+                                                        <div class="form-check form-switch">
+                                                            <input class="form-check-input" type="checkbox" id="enableDkim"
+                                                                checked="@EnableDkimCheck" disabled />
+                                                            <label class="form-check-label" for="enableDkim">Enable DKIM
+                                                                Check</label>
+                                                        </div>
+                                                    </div>
                                                 </div>
                                             </div>
                                         </div>
@@ -134,7 +176,50 @@
             </RadzenTabsItem>
 
             <RadzenTabsItem Text="SPAM">
-                <div class="p-3 text-muted">Spam filtering and related settings can be added here.</div>
+                <div class="p-3">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h5 class="m-0">Spam Logs</h5>
+                        <RadzenButton Icon="refresh" ButtonStyle="ButtonStyle.Light" Click="@LoadSpamLogsAsync"
+                            Size="ButtonSize.Small" />
+                    </div>
+
+                    @if (IsLoadingSpam)
+                    {
+                        <div class="text-center p-3">
+                            <div class="spinner-border text-primary" role="status">
+                                <span class="visually-hidden">Loading...</span>
+                            </div>
+                        </div>
+                    }
+                    else if (SpamLogs == null || !SpamLogs.Any())
+                    {
+                        <div class="text-muted">No spam logs found.</div>
+                    }
+                    else
+                    {
+                        <RadzenDataGrid Data="@SpamLogs" TItem="SpamLog" AllowPaging="true" PageSize="10"
+                            AllowSorting="true" ColumnWidth="150px">
+                            <Columns>
+                                <RadzenDataGridColumn TItem="SpamLog" Property="Timestamp" Title="Time" Width="160px">
+                                    <Template Context="data">
+                                        @data.Timestamp?.ToLocalTime().ToString("g")
+                                    </Template>
+                                </RadzenDataGridColumn>
+                                <RadzenDataGridColumn TItem="SpamLog" Property="From" Title="From" Width="200px" />
+                                <RadzenDataGridColumn TItem="SpamLog" Property="To" Title="To" Width="200px" />
+                                <RadzenDataGridColumn TItem="SpamLog" Property="Subject" Title="Subject" />
+                                <RadzenDataGridColumn TItem="SpamLog" Property="IP" Title="IP" Width="120px" />
+                                <RadzenDataGridColumn TItem="SpamLog" Title="Actions" Width="80px" Sortable="false">
+                                    <Template Context="data">
+                                        <RadzenButton Icon="delete" ButtonStyle="ButtonStyle.Danger"
+                                            Size="ButtonSize.ExtraSmall" Click="@(args => DeleteSpamLogAsync(data))"
+                                            @onclick:stopPropagation="true" />
+                                    </Template>
+                                </RadzenDataGridColumn>
+                            </Columns>
+                        </RadzenDataGrid>
+                    }
+                </div>
             </RadzenTabsItem>
 
             <RadzenTabsItem Text="SPF/DMARC/DKIM">
@@ -145,20 +230,26 @@
 </div>
 
 @code {
-    const string TableName = "SMTPSettings"; 
+    const string TableName = "SMTPSettings";
     const string PK = "SmtpServer";
     const string RKSettings = "Current";
 
-    string? ServerName; string? Ports; string? AllowedRecipient; string? AllowedUsername; string? AllowedPassword; string? AppPassword; string? SpamhausKey; string? SpamhausAccount;
+    string? ServerName; string? Ports; string? AllowedRecipient; string? AllowedUsername; string? AllowedPassword; string?
+    AppPassword; string? SpamhausKey; string? SpamhausAccount;
     bool Saved; string? Error;
 
     bool IsLoading; bool Saving; bool ShowAllowedPassword; bool ShowSpamhausKey; bool ShowAppPassword;
 
     bool EnableSpamFiltering; bool EnableSpfCheck; bool EnableDmarcCheck; bool EnableDkimCheck;
 
+    // Spam Log Logic
+    List<SpamLog>? SpamLogs;
+    bool IsLoadingSpam;
+
     protected override async Task OnInitializedAsync()
     {
         await LoadAsync();
+        _ = LoadSpamLogsAsync();
     }
 
     async Task LoadAsync()
@@ -176,7 +267,7 @@
                 AllowedRecipient = settings.Value?.GetString("AllowedRecipient");
                 AllowedUsername = settings.Value?.GetString("AllowedUsername");
                 AllowedPassword = settings.Value?.GetString("AllowedPassword");
-                // Prefer secret value from configuration; otherwise read from table
+
                 SpamhausKey = Config["SmtpServer:SpamhausKey"];
                 if (string.IsNullOrEmpty(SpamhausKey))
                 {
@@ -190,7 +281,6 @@
                 EnableDmarcCheck = settings.Value?.GetBoolean("EnableDmarcCheck") ?? false;
                 EnableDkimCheck = settings.Value?.GetBoolean("EnableDkimCheck") ?? false;
             }
-            // Load only app password from configuration
             AppPassword = Config["AppPassword"];
         }
         catch (Exception ex) { Error = ex.Message; Log.LogError(ex, "Load failed"); }
@@ -207,9 +297,7 @@
         Error = null; Saved = false; Saving = true;
         try
         {
-            // Only persist app password to appsettings.json. AllowedPassword remains table-sourced and read-only
             await SaveAppPasswordToAppSettingsAsync(AppPassword ?? string.Empty);
-
             Saved = true;
         }
         catch (Exception ex) { Error = ex.Message; Log.LogError(ex, "Save failed"); }
@@ -239,5 +327,46 @@
         root["AppPassword"] = value;
         var options = new JsonSerializerOptions { WriteIndented = true };
         await File.WriteAllTextAsync(path, root.ToJsonString(options));
+    }
+
+    async Task LoadSpamLogsAsync()
+    {
+        IsLoadingSpam = true;
+        try
+        {
+            var table = Tables.GetTableClient("spamlogs");
+            await table.CreateIfNotExistsAsync();
+
+            var logs = new List<SpamLog>();
+            await foreach (var log in table.QueryAsync<SpamLog>())
+            {
+                logs.Add(log);
+            }
+
+            SpamLogs = logs.OrderByDescending(x => x.Timestamp).ToList();
+        }
+        catch (Exception ex)
+        {
+            Log.LogError(ex, "Failed to load spam logs");
+        }
+        finally
+        {
+            IsLoadingSpam = false;
+        }
+    }
+
+    async Task DeleteSpamLogAsync(SpamLog log)
+    {
+        try
+        {
+            var table = Tables.GetTableClient("spamlogs");
+            await table.DeleteEntityAsync(log.PartitionKey, log.RowKey);
+            SpamLogs?.Remove(log);
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception ex)
+        {
+            Log.LogError(ex, "Failed to delete spam log");
+        }
     }
 }

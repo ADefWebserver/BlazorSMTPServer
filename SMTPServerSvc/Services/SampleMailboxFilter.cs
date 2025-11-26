@@ -65,12 +65,13 @@ public class SampleMailboxFilter : IMailboxFilter
             // Only check IPv4 for Zen (IPv6 is supported but requires different handling/zones usually)
             if (ipAddress.AddressFamily == AddressFamily.InterNetwork)
             {
-                bool isListed = await CheckSpamhausAsync(ipAddress, _configuration.SpamhausKey);
+                bool isListed = await CheckSpamhausAsync(ipAddress);
                 if (isListed)
                 {
                     _logger.LogWarning("Detected spam from {FromAddress} (IP: {IP}) - Listed in Spamhaus. Tagging session as spam.", fromAddress, ipAddress);
                     // Tag the session as spam instead of rejecting
                     context.Properties["IsSpam"] = true;
+                    context.Properties["SpamIP"] = ipAddress.ToString();
                     return true;
                 }
             }
@@ -102,7 +103,7 @@ public class SampleMailboxFilter : IMailboxFilter
         return Task.FromResult(canDeliver);
     }
 
-    private async Task<bool> CheckSpamhausAsync(IPAddress ip, string key)
+    private async Task<bool> CheckSpamhausAsync(IPAddress ip)
     {
         // Check cache first
         var cacheKey = $"spamcheck:{ip}";
@@ -114,15 +115,17 @@ public class SampleMailboxFilter : IMailboxFilter
         try
         {
             string query;
-            if (!string.IsNullOrWhiteSpace(key))
+            // Use private key if EnableSpamFiltering is true AND a key is provided
+            if (_configuration.EnableSpamFiltering && !string.IsNullOrWhiteSpace(_configuration.SpamhausKey))
             {
                 // Private key usage: reversed_ip.key.zen.dq.spamhaus.net
                 var reversedIp = string.Join(".", ip.ToString().Split('.').Reverse());
-                query = $"{reversedIp}.{key}.zen.dq.spamhaus.net";
+                query = $"{reversedIp}.{_configuration.SpamhausKey}.zen.dq.spamhaus.net";
             }
             else
             {
                 // Public mirror usage: reversed_ip.zen.spamhaus.org
+                // This is used when EnableSpamFiltering is false OR no key is provided
                 var reversedIp = string.Join(".", ip.ToString().Split('.').Reverse());
                 query = $"{reversedIp}.zen.spamhaus.org";
             }

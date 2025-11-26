@@ -165,7 +165,18 @@ public class SampleMessageStore : MessageStore
 
             if (isSpam)
             {
-                await LogSpamAsync(sessionId.ToString(), transactionId, originalFrom, recipientUser, originalSubject, blobPath, ip: "unknown");
+                // Extract IP address from context
+                string ipAddress = "unknown";
+                if (context.Properties.ContainsKey("SpamIP"))
+                {
+                    ipAddress = context.Properties["SpamIP"]?.ToString() ?? "unknown";
+                }
+                else if (context.Properties.TryGetValue("RemoteEndPoint", out var endpointObj) && endpointObj is System.Net.IPEndPoint ipEndPoint)
+                {
+                    ipAddress = ipEndPoint.Address.ToString();
+                }
+
+                await LogSpamAsync(sessionId?.ToString() ?? "unknown", transactionId, originalFrom, recipientUser, originalSubject, blobPath, ipAddress);
             }
 
             return SmtpResponse.Ok;

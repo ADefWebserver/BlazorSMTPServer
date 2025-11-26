@@ -123,6 +123,7 @@ public class SampleMailboxFilterTests
         var context = CreateSessionContext(false, "8.8.8.8");
         var from = new Mailbox("test@test.com");
         // Since EnableSpamFiltering is true AND key is provided, should use private mirror
+        // IP address octets are reversed
         var expectedQuery = "8.8.8.8.mykey.zen.dq.spamhaus.net";
 
         // Act
@@ -152,6 +153,7 @@ public class SampleMailboxFilterTests
         var context = CreateSessionContext(false, "9.9.9.9");
         var from = new Mailbox("test@test.com");
         // Since EnableSpamFiltering is false, should use public mirror even with key present
+        // IP address octets are reversed
         var expectedQuery = "9.9.9.9.zen.spamhaus.org";
 
         // Act

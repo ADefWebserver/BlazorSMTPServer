@@ -68,7 +68,8 @@ public class SampleMailboxFilterTests
         var filter = new SampleMailboxFilter(_config, _mockLogger.Object, _mockDnsResolver.Object, _memoryCache);
         var context = CreateSessionContext(false, "1.2.3.4");
         var from = new Mailbox("test@test.com");
-        var expectedQuery = "4.3.2.1.testkey.zen.dq.spamhaus.net";
+        // Since EnableSpamFiltering is false, should use public mirror
+        var expectedQuery = "4.3.2.1.zen.spamhaus.org";
 
         // Act
         var result = await filter.CanAcceptFromAsync(context, from, 1024, CancellationToken.None);
@@ -88,7 +89,8 @@ public class SampleMailboxFilterTests
         var filter = new SampleMailboxFilter(_config, _mockLogger.Object, _mockDnsResolver.Object, _memoryCache);
         var context = CreateSessionContext(false, "4.5.6.7");
         var from = new Mailbox("test@test.com");
-        var expectedQuery = "7.6.5.4.testkey.zen.dq.spamhaus.net";
+        // Since EnableSpamFiltering is false, should use public mirror
+        var expectedQuery = "7.6.5.4.zen.spamhaus.org";
 
         // Act
         var result = await filter.CanAcceptFromAsync(context, from, 1024, CancellationToken.None);
@@ -97,6 +99,68 @@ public class SampleMailboxFilterTests
         Assert.True(result); // Should still return true
         Assert.True(context.Properties.ContainsKey("IsSpam"));
         Assert.True((bool)context.Properties["IsSpam"]);
+        Assert.True(context.Properties.ContainsKey("SpamIP"));
+        Assert.Equal("4.5.6.7", context.Properties["SpamIP"]);
+        _mockDnsResolver.Verify(d => d.GetHostAddressesAsync(expectedQuery), Times.Once);
+    }
+
+    [Fact]
+    public async Task CanAcceptFromAsync_WithSpamFilteringEnabled_UsesPrivateKey()
+    {
+        // Arrange
+        var configWithKey = new SmtpServerConfiguration 
+        { 
+            SpamhausKey = "mykey", 
+            EnableSpamFiltering = true, 
+            ServerName = "test.com", 
+            AllowedRecipient = "allowed" 
+        };
+        
+        _mockDnsResolver.Setup(d => d.GetHostAddressesAsync(It.IsAny<string>()))
+                       .ThrowsAsync(new SocketException((int)SocketError.HostNotFound));
+        
+        var filter = new SampleMailboxFilter(configWithKey, _mockLogger.Object, _mockDnsResolver.Object, _memoryCache);
+        var context = CreateSessionContext(false, "8.8.8.8");
+        var from = new Mailbox("test@test.com");
+        // Since EnableSpamFiltering is true AND key is provided, should use private mirror
+        // IP address octets are reversed
+        var expectedQuery = "8.8.8.8.mykey.zen.dq.spamhaus.net";
+
+        // Act
+        var result = await filter.CanAcceptFromAsync(context, from, 1024, CancellationToken.None);
+
+        // Assert
+        Assert.True(result);
+        _mockDnsResolver.Verify(d => d.GetHostAddressesAsync(expectedQuery), Times.Once);
+    }
+
+    [Fact]
+    public async Task CanAcceptFromAsync_WithKeyButFilteringDisabled_UsesPublicMirror()
+    {
+        // Arrange
+        var configWithKeyButDisabled = new SmtpServerConfiguration 
+        { 
+            SpamhausKey = "mykey", 
+            EnableSpamFiltering = false, // Disabled
+            ServerName = "test.com", 
+            AllowedRecipient = "allowed" 
+        };
+        
+        _mockDnsResolver.Setup(d => d.GetHostAddressesAsync(It.IsAny<string>()))
+                       .ThrowsAsync(new SocketException((int)SocketError.HostNotFound));
+        
+        var filter = new SampleMailboxFilter(configWithKeyButDisabled, _mockLogger.Object, _mockDnsResolver.Object, _memoryCache);
+        var context = CreateSessionContext(false, "9.9.9.9");
+        var from = new Mailbox("test@test.com");
+        // Since EnableSpamFiltering is false, should use public mirror even with key present
+        // IP address octets are reversed
+        var expectedQuery = "9.9.9.9.zen.spamhaus.org";
+
+        // Act
+        var result = await filter.CanAcceptFromAsync(context, from, 1024, CancellationToken.None);
+
+        // Assert
+        Assert.True(result);
         _mockDnsResolver.Verify(d => d.GetHostAddressesAsync(expectedQuery), Times.Once);
     }
 }

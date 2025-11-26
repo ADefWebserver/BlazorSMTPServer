@@ -85,7 +85,7 @@ public class DefaultMailboxFilter : IMailboxFilter
             }
         }
 
-        if (context.Properties.TryGetValue("RemoteEndPoint", out var endpointObj) && endpointObj is IPEndPoint ipEndPoint)
+        if (context.Properties.TryGetValue("EndpointListener:RemoteEndPoint", out var endpointObj) && endpointObj is IPEndPoint ipEndPoint)
         {
             var ipAddress = ipEndPoint.Address;
             // Only check IPv4 for Zen (IPv6 is supported but requires different handling/zones usually)
@@ -177,7 +177,7 @@ public class DefaultMailboxFilter : IMailboxFilter
         }
         catch (SocketException ex) when (ex.SocketErrorCode == SocketError.HostNotFound)
         {
-            // Not listed
+            // Host Not listed
             // Cache negative result for 15 minutes
             _cache.Set(cacheKey, false, TimeSpan.FromMinutes(15));
             return false;

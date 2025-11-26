@@ -15,18 +15,18 @@ public class SmtpServerHostedService : BackgroundService
     private readonly ILogger<SmtpServerHostedService> _logger;
     private readonly IServiceProvider _serviceProvider;
     private readonly SmtpServerConfiguration _configuration;
-    private readonly SampleMessageStore _messageStore;
-    private readonly SampleMailboxFilter _mailboxFilter;
-    private readonly SampleUserAuthenticator _userAuthenticator;
+    private readonly DefaultMessageStore _messageStore;
+    private readonly DefaultMailboxFilter _mailboxFilter;
+    private readonly DefaultUserAuthenticator _userAuthenticator;
     private SmtpServer.SmtpServer? _smtpServer;
 
     public SmtpServerHostedService(
         ILogger<SmtpServerHostedService> logger,
         IServiceProvider serviceProvider,
         SmtpServerConfiguration configuration,
-        SampleMessageStore messageStore,
-        SampleMailboxFilter mailboxFilter,
-        SampleUserAuthenticator userAuthenticator)
+        DefaultMessageStore messageStore,
+        DefaultMailboxFilter mailboxFilter,
+        DefaultUserAuthenticator userAuthenticator)
     {
         _logger = logger;
         _serviceProvider = serviceProvider;

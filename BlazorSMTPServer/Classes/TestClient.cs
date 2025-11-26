@@ -19,15 +19,15 @@ public class SmtpTestClient
             var servername = await GetServerNameAsync(tableServiceClient);
 
             // Test 1: Send email to allowed recipient without authentication (should work)
-            await SendTestEmail(tableServiceClient, smtpHost, "sender@example.com", $"TestUserOne@{servername}", 
+            await SendTestEmail(tableServiceClient, smtpHost, "sender@example.com", $"TestUserOne@{servername}",
                 "Test Email Without Auth", "This is a test email without authentication.", false);
 
             // Test 2: Send email to disallowed recipient (should fail)
-            await SendTestEmail(tableServiceClient, smtpHost, "sender@example.com", "notallowed@example.com", 
+            await SendTestEmail(tableServiceClient, smtpHost, "sender@example.com", "notallowed@example.com",
                 "Test Email to Disallowed Recipient", "This should fail.", false);
 
             // Test 3: Send email with authentication (should work)
-            await SendTestEmail(tableServiceClient, smtpHost, "sender@example.com", $"TestUserOne@{servername}", 
+            await SendTestEmail(tableServiceClient, smtpHost, "sender@example.com", $"TestUserOne@{servername}",
                 "Test Email With Auth", "This is a test email with authentication.", true);
 
             // Test 4: Send email to 'abuse' role account (should work)
@@ -148,7 +148,7 @@ public class SmtpTestClient
         {
             var port = await GetFirstPortAsync(tableServiceClient);
             using var client = new SmtpClient(smtpHost, port); // Use same host/IP as Blazor site
-            
+
             if (useAuth)
             {
                 var (username, password) = await GetCredentialsAsync(tableServiceClient);
@@ -161,7 +161,7 @@ public class SmtpTestClient
                     Console.WriteLine("Warning: Missing SMTP credentials in settings; proceeding without authentication.");
                 }
             }
-            
+
             client.EnableSsl = false;
             client.Timeout = 5000;
 
@@ -179,6 +179,22 @@ public class SmtpTestClient
         catch (Exception ex)
         {
             Console.WriteLine($"? Failed to send email to {to} (Auth: {useAuth}): {ex.Message}");
+        }
+    }
+
+    public static async Task SendSpamTestEmail(TableServiceClient tableServiceClient, string smtpHost)
+    {
+        try
+        {
+            Console.WriteLine("Sending Spam Test Email...");
+            var servername = await GetServerNameAsync(tableServiceClient);
+            // Use the special sender address that triggers the test hook in SampleMailboxFilter
+            await SendTestEmail(tableServiceClient, smtpHost, "spam-test@spamhaus.org", $"abuse@{servername}",
+                "Spamhaus Trigger Test", "This email should trigger the Spamhaus detection test hook.", false);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Spam Test failed: {ex.Message}");
         }
     }
 }

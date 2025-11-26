@@ -14,16 +14,16 @@ namespace SMTPServerSvc.Services;
 /// <summary>
 /// Message store implementation that saves email messages to Azure Blob Storage
 /// </summary>
-public class SampleMessageStore : MessageStore
+public class DefaultMessageStore : MessageStore
 {
     private readonly BlobServiceClient? _blobServiceClient;
     private readonly BlobContainerClient? _containerClient;
     private readonly TableClient? _spamLogTableClient;
-    private readonly ILogger<SampleMessageStore> _logger;
+    private readonly ILogger<DefaultMessageStore> _logger;
     private readonly string _containerName;
     private readonly bool _isAvailable;
 
-    public SampleMessageStore(BlobServiceClient blobServiceClient, TableServiceClient tableServiceClient, SmtpServerConfiguration configuration, ILogger<SampleMessageStore> logger)
+    public DefaultMessageStore(BlobServiceClient blobServiceClient, TableServiceClient tableServiceClient, SmtpServerConfiguration configuration, ILogger<DefaultMessageStore> logger)
     {
         _blobServiceClient = blobServiceClient;
         _logger = logger;
@@ -31,7 +31,7 @@ public class SampleMessageStore : MessageStore
 
         try
         {
-            _logger.LogInformation("Initializing SampleMessageStore with Aspire-managed clients");
+            _logger.LogInformation("Initializing DefaultMessageStore with Aspire-managed clients");
 
             // Create container for email messages
             _containerClient = _blobServiceClient.GetBlobContainerClient(_containerName);
@@ -43,7 +43,7 @@ public class SampleMessageStore : MessageStore
 
             _isAvailable = true;
 
-            _logger.LogInformation("SampleMessageStore initialized successfully");
+            _logger.LogInformation("DefaultMessageStore initialized successfully");
         }
         catch (Exception ex)
         {

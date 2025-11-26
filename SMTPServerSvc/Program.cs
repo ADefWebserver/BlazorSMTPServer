@@ -55,12 +55,12 @@ internal class Program
         builder.Services.AddMemoryCache();
 
         // SMTP components
-        builder.Services.AddSingleton<SampleMessageStore>();
-        builder.Services.AddSingleton<IMessageStore>(sp => sp.GetRequiredService<SampleMessageStore>());
-        builder.Services.AddSingleton<SampleMailboxFilter>();
-        builder.Services.AddSingleton<IMailboxFilter>(sp => sp.GetRequiredService<SampleMailboxFilter>());
-        builder.Services.AddSingleton<SampleUserAuthenticator>();
-        builder.Services.AddSingleton<IUserAuthenticator>(sp => sp.GetRequiredService<SampleUserAuthenticator>());
+        builder.Services.AddSingleton<DefaultMessageStore>();
+        builder.Services.AddSingleton<IMessageStore>(sp => sp.GetRequiredService<DefaultMessageStore>());
+        builder.Services.AddSingleton<DefaultMailboxFilter>();
+        builder.Services.AddSingleton<IMailboxFilter>(sp => sp.GetRequiredService<DefaultMailboxFilter>());
+        builder.Services.AddSingleton<DefaultUserAuthenticator>();
+        builder.Services.AddSingleton<IUserAuthenticator>(sp => sp.GetRequiredService<DefaultUserAuthenticator>());
         builder.Services.AddHostedService<SmtpServerHostedService>();
 
         var host = builder.Build();
@@ -86,6 +86,7 @@ internal class Program
             await EnsureSettingsTableAsync(tableClient, smtpConfig, logger);
             await TestBlobAsync(blobClient, "email-messages", logger);
             await TestTableAsync(tableClient, "SMTPServerLogs", logger);
+            await TestTableAsync(tableClient, "spamlogs", logger);
 
             await host.RunAsync();
         }

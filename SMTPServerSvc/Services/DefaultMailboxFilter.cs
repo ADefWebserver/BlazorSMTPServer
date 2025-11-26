@@ -1,27 +1,26 @@
-using Microsoft.Extensions.Caching.Memory;
-using Microsoft.Extensions.Logging;
+using System.Net;
+using System.Net.Sockets;
+using Azure.Data.Tables;
 using SmtpServer;
 using SmtpServer.Mail;
 using SmtpServer.Storage;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Caching.Memory;
 using SMTPServerSvc.Configuration;
-using System.Collections.Generic;
-using System.Net;
-using System.Net.Sockets;
 
 namespace SMTPServerSvc.Services;
 
-/// <summary>
-/// Mailbox filter that checks Spamhaus for unauthenticated users and enforces recipient rules.
-/// </summary>
-public class SampleMailboxFilter : IMailboxFilter
+public class DefaultMailboxFilter : IMailboxFilter
 {
-    private readonly ILogger<SampleMailboxFilter> _logger;
+    private readonly ILogger<DefaultMailboxFilter> _logger;
     private readonly SmtpServerConfiguration _configuration;
     private readonly IDnsResolver _dnsResolver;
     private readonly HashSet<string> _allowedRecipients;
     private readonly IMemoryCache _cache;
+    private readonly TableClient? _spamLogTableClient;
 
-    public SampleMailboxFilter(SmtpServerConfiguration configuration, ILogger<SampleMailboxFilter> logger, IDnsResolver dnsResolver, IMemoryCache cache)
+
+    public DefaultMailboxFilter(SmtpServerConfiguration configuration, ILogger<DefaultMailboxFilter> logger, IDnsResolver dnsResolver, IMemoryCache cache, TableServiceClient tableServiceClient)
     {
         _logger = logger;
         _configuration = configuration;
@@ -43,20 +42,47 @@ public class SampleMailboxFilter : IMailboxFilter
             _allowedRecipients.Add($"postmaster@{domain}");
         }
 
-        _logger.LogInformation("SampleMailboxFilter initialized. Allowed recipients: {Allowed}", string.Join(", ", _allowedRecipients));
+        try
+        {
+            _spamLogTableClient = tableServiceClient.GetTableClient("spamlogs");
+            _spamLogTableClient.CreateIfNotExists();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to initialize spam logs table client in DefaultMailboxFilter");
+        }
+
+        _logger.LogInformation("DefaultMailboxFilter initialized. Allowed recipients: {Allowed}", string.Join(", ", _allowedRecipients));
     }
 
     public async Task<bool> CanAcceptFromAsync(ISessionContext context, IMailbox @from, int size, CancellationToken cancellationToken)
     {
         var fromAddress = @from.AsAddress();
 
-        // Check if the user is authenticated (set by SampleUserAuthenticator)
+        // Check if the user is authenticated (set by DefaultUserAuthenticator)
         bool isAuthenticated = context.Properties.ContainsKey("IsAuthenticated") && (bool)context.Properties["IsAuthenticated"];
 
         if (isAuthenticated)
         {
             _logger.LogInformation("Accepting mail from authenticated user: {FromAddress}", fromAddress);
             return true;
+        }
+
+        // TEST HOOK: If the sender is the special spam test address, force a check against the Spamhaus test IP
+        if (string.Equals(fromAddress, "spam-test@spamhaus.org", StringComparison.OrdinalIgnoreCase))
+        {
+            _logger.LogWarning("Detected SPAM TEST from {FromAddress}. Forcing check against 127.0.0.2", fromAddress);
+            // 127.0.0.2 is the standard Spamhaus test IP that is always listed
+            var testIp = IPAddress.Parse("127.0.0.2");
+            bool isListed = await CheckSpamhausAsync(testIp);
+            if (isListed)
+            {
+                _logger.LogWarning("Detected spam from {FromAddress} (TEST IP: {IP}) - Listed in Spamhaus. Tagging session as spam.", fromAddress, testIp);
+                context.Properties["IsSpam"] = true;
+                context.Properties["SpamIP"] = testIp.ToString();
+                await LogSpamDetectionAsync(context, fromAddress, testIp.ToString());
+                return true;
+            }
         }
 
         if (context.Properties.TryGetValue("RemoteEndPoint", out var endpointObj) && endpointObj is IPEndPoint ipEndPoint)
@@ -72,6 +98,9 @@ public class SampleMailboxFilter : IMailboxFilter
                     // Tag the session as spam instead of rejecting
                     context.Properties["IsSpam"] = true;
                     context.Properties["SpamIP"] = ipAddress.ToString();
+
+                    await LogSpamDetectionAsync(context, fromAddress, ipAddress.ToString());
+
                     return true;
                 }
             }
@@ -161,5 +190,36 @@ public class SampleMailboxFilter : IMailboxFilter
         }
 
         return false;
+    }
+
+    private async Task LogSpamDetectionAsync(ISessionContext context, string from, string ip)
+    {
+        if (_spamLogTableClient == null) return;
+
+        try
+        {
+            var sessionId = context.Properties.ContainsKey("SessionId") ? context.Properties["SessionId"]?.ToString() ?? "unknown" : "unknown";
+
+            var entity = new TableEntity
+            {
+                PartitionKey = DateTime.UtcNow.ToString("yyyy-MM-dd"),
+                RowKey = $"{DateTime.UtcNow:HHmmss.fff}_{Guid.NewGuid():N}_DETECT",
+                ["Timestamp"] = DateTime.UtcNow,
+                ["SessionId"] = sessionId,
+                ["TransactionId"] = "detection", // No transaction ID yet at this stage usually
+                ["From"] = from,
+                ["To"] = "unknown", // Recipient not known at MAIL FROM stage usually, or not relevant for connection block
+                ["Subject"] = "(spam detected during connection/mailfrom)",
+                ["BlobPath"] = "not-saved",
+                ["IP"] = ip,
+                ["Status"] = "Detected"
+            };
+
+            await _spamLogTableClient.AddEntityAsync(entity);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to log spam detection to table storage");
+        }
     }
 }

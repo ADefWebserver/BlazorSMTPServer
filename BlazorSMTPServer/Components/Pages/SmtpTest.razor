@@ -23,6 +23,18 @@
             <span>Run SMTP Tests</span>
         }
     </button>
+
+    <button class="btn btn-danger ms-2" @onclick="RunSpamTest" disabled="@isSpamRunning">
+        @if (isRunning)
+        {
+            <span class="spinner-border spinner-border-sm me-2" role="status"></span>
+            <span>Running...</span>
+        }
+        else
+        {
+            <span>Trigger Spamhaus Test</span>
+        }
+    </button>
 </div>
 
 @if (!string.IsNullOrEmpty(testResult))
@@ -48,6 +60,7 @@
 
 @code {
     private bool isRunning = false;
+    private bool isSpamRunning = false;
     private string testResult = string.Empty;
     private bool testSuccess = false;
     private List<string> testLogs = new();
@@ -78,10 +91,23 @@
     private async Task RunSmtpTest()
     {
         isRunning = true;
+        StateHasChanged();
+        await RunTest(async (host) => await SmtpTestClient.TestSmtpServer(TableServiceClient, host));
+    }
+
+    private async Task RunSpamTest()
+    {
+        isSpamRunning = true;
+        StateHasChanged();
+        await RunTest(async (host) => await SmtpTestClient.SendSpamTestEmail(TableServiceClient, host));
+    }
+
+    private async Task RunTest(Func<string, Task> testAction)
+    {
         testResult = string.Empty;
         testLogs.Clear();
         testSuccess = false;
-        
+
         StateHasChanged();
 
         try
@@ -92,7 +118,7 @@
             Console.SetOut(stringWriter);
 
             var smtpHost = ResolveSmtpHost();
-            await SmtpTestClient.TestSmtpServer(TableServiceClient, smtpHost);
+            await testAction(smtpHost);
 
             // Restore console output
             Console.SetOut(originalOut);
@@ -100,13 +126,13 @@
             // Get the captured output
             var output = stringWriter.ToString();
             testLogs = output.Split('\n', StringSplitOptions.RemoveEmptyEntries).ToList();
-            
-            testResult = "SMTP tests completed successfully!";
+
+            testResult = "Tests completed!";
             testSuccess = true;
         }
         catch (Exception ex)
         {
-            testResult = $"SMTP tests failed: {ex.Message}";
+            testResult = $"Tests failed: {ex.Message}";
             testSuccess = false;
             testLogs.Add($"Error: {ex.Message}");
             if (ex.InnerException != null)
@@ -116,6 +142,7 @@
         }
         finally
         {
+            isSpamRunning = false;
             isRunning = false;
             StateHasChanged();
         }

@@ -8,19 +8,19 @@ namespace SMTPServerSvc.Services;
 /// <summary>
 /// User authenticator that only allows SMTP relay for configured username and password
 /// </summary>
-public class SampleUserAuthenticator : IUserAuthenticator
+public class DefaultUserAuthenticator : IUserAuthenticator
 {
-    private readonly ILogger<SampleUserAuthenticator> _logger;
+    private readonly ILogger<DefaultUserAuthenticator> _logger;
     private readonly string _allowedUsername;
     private readonly string _allowedPassword;
 
-    public SampleUserAuthenticator(SmtpServerConfiguration configuration, ILogger<SampleUserAuthenticator> logger)
+    public DefaultUserAuthenticator(SmtpServerConfiguration configuration, ILogger<DefaultUserAuthenticator> logger)
     {
         _logger = logger;
         _allowedUsername = configuration.AllowedUsername;
         _allowedPassword = configuration.AllowedPassword;
         
-        _logger.LogInformation("SampleUserAuthenticator initialized. Only allowing user: {AllowedUsername}", _allowedUsername);
+        _logger.LogInformation("DefaultUserAuthenticator initialized. Only allowing user: {AllowedUsername}", _allowedUsername);
     }
 
     public Task<bool> AuthenticateAsync(ISessionContext context, string user, string password, CancellationToken cancellationToken)

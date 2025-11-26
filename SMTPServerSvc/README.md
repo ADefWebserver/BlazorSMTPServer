@@ -206,9 +206,9 @@ The `dev-helper.ps1` script provides convenient commands for development:
 
 ### Components
 
-1. **SampleMessageStore**: Saves emails to Azure Blob Storage
-2. **SampleMailboxFilter**: Filters recipients (only allows TestUserOne@BlazorHelpWebsiteEmail.com)
-3. **SampleUserAuthenticator**: Authenticates SMTP relay users (Admin/password)
+1. **DefaultMessageStore**: Saves emails to Azure Blob Storage
+2. **DefaultMailboxFilter**: Filters recipients (only allows TestUserOne@BlazorHelpWebsiteEmail.com)
+3. **DefaultUserAuthenticator**: Authenticates SMTP relay users (Admin/password)
 4. **TableStorageLogger**: Logs all operations to Azure Table Storage
 5. **SmtpServerHostedService**: Manages the SMTP server lifecycle
 
@@ -304,9 +304,9 @@ To extend or modify the server:
 ```
 SMTPServerSvc/
 ??? Services/
-?   ??? SampleMessageStore.cs      # Blob storage for emails
-?   ??? SampleMailboxFilter.cs     # Recipient filtering
-?   ??? SampleUserAuthenticator.cs # SMTP authentication
+?   ??? DefaultMessageStore.cs      # Blob storage for emails
+?   ??? DefaultMailboxFilter.cs     # Recipient filtering
+?   ??? DefaultUserAuthenticator.cs # SMTP authentication
 ?   ??? SmtpServerHostedService.cs # Server lifecycle
 ?   ??? TableStorageLogger.cs      # Azure Table logging
 ??? Configuration/

@@ -397,7 +397,7 @@
             }
 
             // Order descending by timestamp after adding page
-            SpamLogs = SpamLogs.OrderByDescending(x => x.Timestamp).ToList();
+            SpamLogs = SpamLogs?.OrderByDescending(x => x.Timestamp).ToList();
         }
         catch (Exception ex)
         {

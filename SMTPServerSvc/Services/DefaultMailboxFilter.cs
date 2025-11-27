@@ -148,8 +148,7 @@ public class DefaultMailboxFilter : IMailboxFilter
             if (_configuration.EnableSpamFiltering && !string.IsNullOrWhiteSpace(_configuration.SpamhausKey))
             {
                 // Private key usage: reversed_ip.key.zen.dq.spamhaus.net
-                var reversedIp = string.Join(".", ip.ToString().Split('.').Reverse());
-                query = $"{reversedIp}.{_configuration.SpamhausKey}.zen.dq.spamhaus.net";
+                query = BuildSpamhausQuery(ip, _configuration.SpamhausKey);
             }
             else
             {
@@ -190,6 +189,26 @@ public class DefaultMailboxFilter : IMailboxFilter
         }
 
         return false;
+    }
+
+    public string BuildSpamhausQuery(IPAddress ip, string licenseKey)
+    {
+        // 1. Check if the IP is IPv4
+        if (ip.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork)
+        {
+            // Handle IPv6 or throw exception depending on your needs
+            // Spamhaus supports IPv6, but the reversal logic is completely different.
+            throw new NotSupportedException("This implementation only supports IPv4.");
+        }
+
+        // 2. Efficiently reverse the bytes without string splitting overhead
+        var bytes = ip.GetAddressBytes();
+        
+        // 3. Create the string (192.168.1.1 -> 1.1.168.192)
+        var reversedIp = string.Join(".", bytes.Reverse());
+
+        // 4. Construct the DQS query
+        return $"{reversedIp}.{licenseKey}.zen.dq.spamhaus.net";
     }
 
     private async Task LogSpamDetectionAsync(ISessionContext context, string from, string ip)

@@ -188,11 +188,17 @@
                 <div class="p-3">
                     <div class="d-flex justify-content-between align-items-center mb-3">
                         <h5 class="m-0">Spam Logs</h5>
-                        <RadzenButton Icon="refresh" ButtonStyle="ButtonStyle.Light" Click="@LoadSpamLogsAsync"
-                            Size="ButtonSize.Small" />
+                        <div class="d-flex gap-2">
+                            <RadzenButton Icon="refresh" ButtonStyle="ButtonStyle.Light" Click="@LoadSpamLogsAsync"
+                                Size="ButtonSize.Small" Disabled="@IsLoadingSpam" />
+                            @if (_spamHasMore && !IsLoadingSpam)
+                            {
+                                <RadzenButton Icon="add" Text="More" ButtonStyle="ButtonStyle.Light" Size="ButtonSize.Small" Click="@LoadMoreSpamLogsAsync" />
+                            }
+                        </div>
                     </div>
 
-                    @if (IsLoadingSpam)
+                    @if (IsLoadingSpam && (SpamLogs == null || SpamLogs.Count == 0))
                     {
                         <div class="text-center p-3">
                             <div class="spinner-border text-primary" role="status">
@@ -218,15 +224,12 @@
                                 <RadzenDataGridColumn TItem="SpamLog" Property="To" Title="To" Width="200px" />
                                 <RadzenDataGridColumn TItem="SpamLog" Property="Subject" Title="Subject" />
                                 <RadzenDataGridColumn TItem="SpamLog" Property="IP" Title="IP" Width="120px" />
-                                <RadzenDataGridColumn TItem="SpamLog" Title="Actions" Width="80px" Sortable="false">
-                                    <Template Context="data">
-                                        <RadzenButton Icon="delete" ButtonStyle="ButtonStyle.Danger"
-                                            Size="ButtonSize.ExtraSmall" Click="@(args => DeleteSpamLogAsync(data))"
-                                            @onclick:stopPropagation="true" />
-                                    </Template>
-                                </RadzenDataGridColumn>
                             </Columns>
                         </RadzenDataGrid>
+                        @if (IsLoadingSpam && SpamLogs.Count > 0)
+                        {
+                            <div class="mt-2 text-muted">Loading more...</div>
+                        }
                     }
                 </div>
             </RadzenTabsItem>
@@ -254,6 +257,9 @@
     // Spam Log Logic
     List<SpamLog>? SpamLogs;
     bool IsLoadingSpam;
+    string? _spamContinuationToken; // paging token
+    bool _spamHasMore; // more pages flag
+    readonly int _spamPageSize = 200; // page size for table query
 
     protected override async Task OnInitializedAsync()
     {
@@ -340,42 +346,74 @@
 
     async Task LoadSpamLogsAsync()
     {
+        // Initial load or refresh -> reset paging state
+        _spamContinuationToken = null;
+        _spamHasMore = true;
+        SpamLogs = new List<SpamLog>();
+        await LoadMoreSpamLogsAsync();
+    }
+
+    async Task LoadMoreSpamLogsAsync()
+    {
+        if (IsLoadingSpam || !_spamHasMore) return;
         IsLoadingSpam = true;
         try
         {
             var table = Tables.GetTableClient("spamlogs");
             await table.CreateIfNotExistsAsync();
 
-            var logs = new List<SpamLog>();
-            await foreach (var log in table.QueryAsync<SpamLog>())
+            await foreach (var page in table.QueryAsync<TableEntity>().AsPages(_spamContinuationToken, _spamPageSize))
             {
-                logs.Add(log);
+                foreach (var entity in page.Values)
+                {
+                    // Map TableEntity -> SpamLog
+                    var log = new SpamLog
+                    {
+                        PartitionKey = entity.PartitionKey,
+                        RowKey = entity.RowKey,
+                        Timestamp = ExtractSpamTimestamp(entity),
+                        SessionId = entity.TryGetValue("SessionId", out var session) ? session?.ToString() : null,
+                        TransactionId = entity.TryGetValue("TransactionId", out var txn) ? txn?.ToString() : null,
+                        From = entity.TryGetValue("From", out var from) ? from?.ToString() : null,
+                        To = entity.TryGetValue("To", out var to) ? to?.ToString() : null,
+                        Subject = entity.TryGetValue("Subject", out var subj) ? subj?.ToString() : null,
+                        BlobPath = entity.TryGetValue("BlobPath", out var blob) ? blob?.ToString() : null,
+                        IP = entity.TryGetValue("IP", out var ip) ? ip?.ToString() : null
+                    };
+                    SpamLogs!.Add(log);
+                }
+                _spamContinuationToken = page.ContinuationToken;
+                _spamHasMore = !string.IsNullOrEmpty(_spamContinuationToken);
+                break; // only one page per call
             }
 
-            SpamLogs = logs.OrderByDescending(x => x.Timestamp).ToList();
+            // Order descending by timestamp after adding page
+            SpamLogs = SpamLogs.OrderByDescending(x => x.Timestamp).ToList();
         }
         catch (Exception ex)
         {
-            Log.LogError(ex, "Failed to load spam logs");
+            Log.LogError(ex, "Failed to load spam logs page");
+            _spamHasMore = false;
         }
         finally
         {
             IsLoadingSpam = false;
+            await InvokeAsync(StateHasChanged);
         }
     }
 
-    async Task DeleteSpamLogAsync(SpamLog log)
+    static DateTimeOffset? ExtractSpamTimestamp(TableEntity entity)
     {
         try
         {
-            var table = Tables.GetTableClient("spamlogs");
-            await table.DeleteEntityAsync(log.PartitionKey, log.RowKey);
-            SpamLogs?.Remove(log);
-            await InvokeAsync(StateHasChanged);
+            if (entity.TryGetValue("Timestamp", out var tsObj) && tsObj is not null)
+            {
+                if (tsObj is DateTime dt) return new DateTimeOffset(dt.ToUniversalTime());
+                if (tsObj is DateTimeOffset dto) return dto.ToUniversalTime();
+                if (DateTime.TryParse(tsObj.ToString(), out var parsed)) return new DateTimeOffset(parsed.ToUniversalTime());
+            }
         }
-        catch (Exception ex)
-        {
-            Log.LogError(ex, "Failed to delete spam log");
-        }
+        catch { }
+        return entity.Timestamp;
     }
 }

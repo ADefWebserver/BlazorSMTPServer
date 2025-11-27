@@ -19,25 +19,25 @@ public class SmtpTestClient
             var servername = await GetServerNameAsync(tableServiceClient);
 
             // Test 1: Send email to allowed recipient without authentication (should work)
-            await SendTestEmail(tableServiceClient, smtpHost, "sender@example.com", $"TestUserOne@{servername}",
+            await SendTestEmail(tableServiceClient, smtpHost, $"sender@{servername}", $"TestUserOne@{servername}",
                 "Test Email Without Auth", "This is a test email without authentication.", false);
 
             // Test 2: Send email to disallowed recipient (should fail)
-            await SendTestEmail(tableServiceClient, smtpHost, "sender@example.com", "notallowed@example.com",
+            await SendTestEmail(tableServiceClient, smtpHost, $"sender@{servername}", "notallowed@example.com",
                 "Test Email to Disallowed Recipient", "This should fail.", false);
 
             // Test 3: Send email with authentication (should work)
-            await SendTestEmail(tableServiceClient, smtpHost, "sender@example.com", $"TestUserOne@{servername}",
+            await SendTestEmail(tableServiceClient, smtpHost, $"sender@{servername}", $"TestUserOne@{servername}",
                 "Test Email With Auth", "This is a test email with authentication.", true);
 
             // Test 4: Send email to 'abuse' role account (should work)
             if (!string.IsNullOrWhiteSpace(servername))
             {
-                await SendTestEmail(tableServiceClient, smtpHost, "sender@example.com", $"abuse@{servername}",
+                await SendTestEmail(tableServiceClient, smtpHost, $"sender@{servername}", $"abuse@{servername}",
                     "Test Email to abuse", "This is a test email to the abuse mailbox.", false);
 
                 // Test 5: Send email to 'postmaster' role account (should work)
-                await SendTestEmail(tableServiceClient, smtpHost, "sender@example.com", $"postmaster@{servername}",
+                await SendTestEmail(tableServiceClient, smtpHost, $"sender@{servername}", $"postmaster@{servername}",
                     "Test Email to postmaster", "This is a test email to the postmaster mailbox.", false);
             }
 

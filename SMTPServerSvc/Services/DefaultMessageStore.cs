@@ -20,13 +20,17 @@ public class DefaultMessageStore : MessageStore
     private readonly BlobContainerClient? _containerClient;
     private readonly TableClient? _spamLogTableClient;
     private readonly ILogger<DefaultMessageStore> _logger;
+    private readonly SmtpServerConfiguration _configuration;
+    private readonly MailAuthenticationService _authService;
     private readonly string _containerName;
     private readonly bool _isAvailable;
 
-    public DefaultMessageStore(BlobServiceClient blobServiceClient, TableServiceClient tableServiceClient, SmtpServerConfiguration configuration, ILogger<DefaultMessageStore> logger)
+    public DefaultMessageStore(BlobServiceClient blobServiceClient, TableServiceClient tableServiceClient, SmtpServerConfiguration configuration, ILogger<DefaultMessageStore> logger, MailAuthenticationService authService)
     {
         _blobServiceClient = blobServiceClient;
         _logger = logger;
+        _configuration = configuration;
+        _authService = authService;
         _containerName = "email-messages";
 
         try
@@ -134,6 +138,58 @@ public class DefaultMessageStore : MessageStore
             var originalSubject = HeaderFromOriginal(messageContent, "Subject") ?? "(no subject)";
             var originalFrom = HeaderFromOriginal(messageContent, "From") ?? string.Empty;
 
+            // ******************************************************************************************************************************
+            // DKIM & DMARC Validation (Requires full message content)
+            // ******************************************************************************************************************************
+            bool dkimPass = false;
+            bool dmarcPass = false;
+            string? dkimSignature = HeaderFromOriginal(messageContent, "DKIM-Signature");
+
+            if (_configuration.EnableDkimCheck && !string.IsNullOrEmpty(dkimSignature))
+            {
+                dkimPass = await _authService.ValidateDkimAsync(dkimSignature);
+                if (!dkimPass)
+                {
+                    _logger.LogWarning("DKIM Validation Failed for {From}", originalFrom);
+                }
+                else
+                {
+                    _logger.LogInformation("DKIM Validation Passed for {From}", originalFrom);
+                }
+            }
+
+            if (_configuration.EnableDmarcCheck)
+            {
+                // Retrieve SPF result from context (set in DefaultMailboxFilter)
+                bool spfPass = context.Properties.ContainsKey("SpfPass") && (bool)context.Properties["SpfPass"];
+                string fromDomain = context.Properties.ContainsKey("FromDomain") ? (string)context.Properties["FromDomain"] : "";
+
+                // DMARC requires SPF OR DKIM to pass (and align)
+                // Simplified check: if either passed, we consider DMARC passed for now.
+                // Real DMARC requires checking alignment of From domain with SPF/DKIM domains.
+                
+                if (spfPass || dkimPass)
+                {
+                    dmarcPass = true;
+                    _logger.LogInformation("DMARC Check Passed (SPF: {Spf}, DKIM: {Dkim})", spfPass, dkimPass);
+                }
+                else
+                {
+                    // Fetch policy to see if we should reject
+                    if (!string.IsNullOrEmpty(fromDomain))
+                    {
+                        var policy = await _authService.GetDmarcPolicyAsync(fromDomain);
+                        _logger.LogWarning("DMARC Check Failed for {Domain}. Policy: {Policy}", fromDomain, policy ?? "none");
+                        
+                        if (policy == "reject" || policy == "quarantine")
+                        {
+                            isSpam = true; // Mark as spam
+                        }
+                    }
+                }
+            }
+            // ******************************************************************************************************************************
+
             // Add metadata preamble (custom headers) followed by a blank line, then original message content
             var enhancedContent = new StringBuilder();
             enhancedContent.AppendLine($"X-SMTP-Server-Received: {DateTime.UtcNow:R}");
@@ -142,6 +198,8 @@ public class DefaultMessageStore : MessageStore
             enhancedContent.AppendLine($"X-SMTP-Server-BlobName: {blobPath}");
             enhancedContent.AppendLine($"X-SMTP-Server-Recipient-User: {recipientUser}");
             if (isSpam) enhancedContent.AppendLine("X-SMTP-Server-Spam: True");
+            if (dkimPass) enhancedContent.AppendLine("X-SMTP-Server-DKIM: Pass");
+            if (dmarcPass) enhancedContent.AppendLine("X-SMTP-Server-DMARC: Pass");
             enhancedContent.AppendLine();
             enhancedContent.Append(messageContent);
 

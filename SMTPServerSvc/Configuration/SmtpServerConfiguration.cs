@@ -49,22 +49,23 @@ public class SmtpServerConfiguration
     public bool UsePublicSpamhausMirror { get; set; } = false;
 
     /// <summary>
-    /// If true, enables spam filtering.
-    /// </summary>
-    public bool EnableSpamFiltering { get; set; } = false;
-
-    /// <summary>
-    /// If true, enables SPF check.
+    /// Enable SPF check
     /// </summary>
     public bool EnableSpfCheck { get; set; } = false;
 
     /// <summary>
-    /// If true, enables DMARC check.
+    /// Enable DMARC check
     /// </summary>
     public bool EnableDmarcCheck { get; set; } = false;
 
     /// <summary>
-    /// If true, enables DKIM check.
+    /// Enable DKIM check
     /// </summary>
     public bool EnableDkimCheck { get; set; } = false;
+
+    /// <summary>
+    /// If true, enables spam filtering.
+    /// </summary>
+    public bool EnableSpamFiltering { get; set; } = false;
+
 }

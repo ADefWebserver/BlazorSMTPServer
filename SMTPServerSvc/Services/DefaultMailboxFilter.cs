@@ -15,16 +15,18 @@ public class DefaultMailboxFilter : IMailboxFilter
     private readonly ILogger<DefaultMailboxFilter> _logger;
     private readonly SmtpServerConfiguration _configuration;
     private readonly IDnsResolver _dnsResolver;
+    private readonly MailAuthenticationService _authService;
     private readonly HashSet<string> _allowedRecipients;
     private readonly IMemoryCache _cache;
     private readonly TableClient? _spamLogTableClient;
 
 
-    public DefaultMailboxFilter(SmtpServerConfiguration configuration, ILogger<DefaultMailboxFilter> logger, IDnsResolver dnsResolver, IMemoryCache cache, TableServiceClient tableServiceClient)
+    public DefaultMailboxFilter(SmtpServerConfiguration configuration, ILogger<DefaultMailboxFilter> logger, IDnsResolver dnsResolver, MailAuthenticationService authService, IMemoryCache cache, TableServiceClient tableServiceClient)
     {
         _logger = logger;
         _configuration = configuration;
         _dnsResolver = dnsResolver;
+        _authService = authService;
         _cache = cache;
         _allowedRecipients = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -106,6 +108,45 @@ public class DefaultMailboxFilter : IMailboxFilter
 
                     return true;
                 }
+            }
+
+            // SPF Check
+            if (_configuration.EnableSpfCheck)
+            {
+                var ip = ipAddress.ToString();
+                var domain = @from.Host;
+                bool spfPass = await _authService.ValidateSpfAsync(ip, domain);
+                
+                // Store SPF result for DMARC check later in MessageStore
+                context.Properties["SpfPass"] = spfPass;
+                context.Properties["FromDomain"] = domain;
+
+                if (!spfPass)
+                {
+                    _logger.LogWarning("SPF Check Failed for {Domain} from IP {IP}", domain, ip);
+                    context.Properties["IsSpam"] = true;
+                    await LogSpamDetectionAsync(context, fromAddress, ip);
+                }
+            }
+
+            // DMARC Check (Policy only at this stage)
+            if (_configuration.EnableDmarcCheck)
+            {
+                var domain = @from.Host;
+                var dmarcPolicy = await _authService.GetDmarcPolicyAsync(domain);
+                if (!string.IsNullOrEmpty(dmarcPolicy))
+                {
+                    _logger.LogInformation("DMARC Policy for {Domain}: {Policy}", domain, dmarcPolicy);
+                    // We cannot fully validate DMARC without DKIM (which requires body), 
+                    // but we can log the policy presence.
+                }
+            }
+
+            // DKIM Check (Not possible at MAIL FROM stage)
+            if (_configuration.EnableDkimCheck)
+            {
+                // DKIM requires message body, so we cannot check it here.
+                // This would typically be done in IMessageStore.SaveAsync
             }
         }
 

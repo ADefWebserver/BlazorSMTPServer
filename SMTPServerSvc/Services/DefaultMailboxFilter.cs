@@ -68,7 +68,8 @@ public class DefaultMailboxFilter : IMailboxFilter
             return true;
         }
 
-        // TEST HOOK: If the sender is the special spam test address, force a check against the Spamhaus test IP
+        // ******************************************************************************************************************************
+        #region TEST HOOK: If the sender is "spam-test@spamhaus.org" (a special spam test address), force a check against the Spamhaus test IP
         if (string.Equals(fromAddress, "spam-test@spamhaus.org", StringComparison.OrdinalIgnoreCase))
         {
             _logger.LogWarning("Detected SPAM TEST from {FromAddress}. Forcing check against 127.0.0.2", fromAddress);
@@ -84,6 +85,8 @@ public class DefaultMailboxFilter : IMailboxFilter
                 return true;
             }
         }
+        #endregion
+        // ******************************************************************************************************************************
 
         if (context.Properties.TryGetValue("EndpointListener:RemoteEndPoint", out var endpointObj) && endpointObj is IPEndPoint ipEndPoint)
         {

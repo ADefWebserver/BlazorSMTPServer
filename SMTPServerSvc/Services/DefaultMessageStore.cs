@@ -63,7 +63,6 @@ public class DefaultMessageStore : MessageStore
 
             // Check for spam tag
             bool isSpam = context.Properties.ContainsKey("IsSpam") && (bool)context.Properties["IsSpam"];
-            var targetContainer = isSpam ? "spam-messages" : _containerName;
 
             _logger.LogInformation("Saving message for session {SessionId}, transaction {TransactionId}, size {MessageSize} bytes. IsSpam: {IsSpam}",
                 sessionId, transactionId, buffer.Length, isSpam);
@@ -81,7 +80,7 @@ public class DefaultMessageStore : MessageStore
             }
 
             // Get the correct container client
-            var containerClient = isSpam ? _blobServiceClient!.GetBlobContainerClient(targetContainer) : _containerClient;
+            var containerClient = isSpam ? _blobServiceClient!.GetBlobContainerClient(_containerName) : _containerClient;
             await containerClient.CreateIfNotExistsAsync(cancellationToken: cancellationToken);
 
             // Determine recipient user folder (first recipient)
@@ -98,6 +97,14 @@ public class DefaultMessageStore : MessageStore
 
             // Sanitize recipient for use as a blob virtual folder
             string recipientFolder = SanitizeForBlobPath(recipientUser);
+
+            if (isSpam)
+            {
+                // This will force the blob to go into a 'spam' folder
+                // regardless of recipient
+                // if it has been marked as spam
+                recipientFolder = "spam";
+            }
 
             // Generate unique blob name with timestamp
             var timestamp = DateTime.UtcNow.ToString("yyyy-MM-dd_HH-mm-ss-fff");
@@ -151,7 +158,7 @@ public class DefaultMessageStore : MessageStore
                 ["TransactionId"] = transactionId,
                 ["ReceivedAt"] = DateTime.UtcNow.ToString("O"),
                 ["MessageSize"] = buffer.Length.ToString(),
-                ["ContainerName"] = targetContainer,
+                ["ContainerName"] = _containerName,
                 ["RecipientUser"] = recipientUser,
                 ["Subject"] = originalSubject,
                 ["From"] = originalFrom,
@@ -161,7 +168,7 @@ public class DefaultMessageStore : MessageStore
             await blobClient.SetMetadataAsync(metadata, cancellationToken: cancellationToken);
 
             _logger.LogInformation("Message saved successfully to blob {BlobName} in container {ContainerName}, size {MessageSize} bytes",
-                blobPath, targetContainer, buffer.Length);
+                blobPath, _containerName, buffer.Length);
 
             if (isSpam)
             {

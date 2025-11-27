@@ -148,9 +148,12 @@
     private List<string> EnsureDefaultMailboxes(IEnumerable<string> existing)
     {
         var set = new HashSet<string>(existing ?? Enumerable.Empty<string>(), StringComparer.OrdinalIgnoreCase);
+
         // Always include role accounts
         set.Add("abuse");
         set.Add("postmaster");
+        set.Add("spam");
+
         // Include configured recipient local-part if present
         var configuredUser = GetUserFromEmail(_allowedRecipient);
         if (!string.IsNullOrWhiteSpace(configuredUser)) set.Add(configuredUser);

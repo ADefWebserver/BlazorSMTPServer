@@ -140,7 +140,9 @@
                     <div class="alert alert-info">
                         See this <a href="https://smartreach.io/blog/how-to-set-up-spf-dkim-dmarc-guide/" target="_blank">guide</a> as to what you need to do to configure the DNS settings for your email server.
                     </div>
-
+                    <div class="alert alert-warning">
+                        After making changes to your DNS records, it may take some time for the changes to propagate. Use the verification buttons below to check if the records are correctly set up.
+                    </div>
                     <div class="card shadow-sm mb-4">
                         <div class="card-body">
                             <details>
@@ -159,16 +161,16 @@
 
                     <div class="card shadow-sm mb-4">
                         <div class="card-body">
-                              <details>
+                            <details>
                                 <summary class="h5 card-title mb-3" style="cursor: pointer">SPF Record</summary>
-                            <p>Proper Value: <code>v=spf1 mx a:@ServerName -all</code></p>
-                            <RadzenButton Text="Verify SPF" Click="@VerifySPF" IsBusy="@IsVerifyingSPF" />
-                            @if (SpfResult != null)
-                            {
-                                <div class="mt-2 alert @(SpfSuccess ? "alert-success" : "alert-warning")">
-                                    @SpfResult
-                                </div>
-                            }
+                                <p>Proper Value: <code>v=spf1 mx a:@ServerName -all</code></p>
+                                <RadzenButton Text="Verify SPF" Click="@VerifySPF" IsBusy="@IsVerifyingSPF" />
+                                @if (SpfResult != null)
+                                {
+                                    <div class="mt-2 alert @(SpfSuccess ? "alert-success" : "alert-warning")">
+                                        @SpfResult
+                                    </div>
+                                }
                             </details>
                         </div>
                     </div>
@@ -176,15 +178,15 @@
                     <div class="card shadow-sm mb-4">
                         <div class="card-body">
                             <details>
-                            <summary class="h5 card-title mb-3" style="cursor: pointer">DMARC Record</summary>
-                            <p>Proper Value: <code>v=DMARC1; p=none; rua=mailto:postmaster@@@ServerName</code></p>
-                            <RadzenButton Text="Verify DMARC" Click="@VerifyDMARC" IsBusy="@IsVerifyingDMARC" />
-                            @if (DmarcResult != null)
-                            {
-                                <div class="mt-2 alert @(DmarcSuccess ? "alert-success" : "alert-warning")">
-                                    @DmarcResult
-                                </div>
-                            }
+                                <summary class="h5 card-title mb-3" style="cursor: pointer">DMARC Record</summary>
+                                <p>Proper Value: <code>v=DMARC1; p=none; rua=mailto:postmaster@@@ServerName</code></p>
+                                <RadzenButton Text="Verify DMARC" Click="@VerifyDMARC" IsBusy="@IsVerifyingDMARC" />
+                                @if (DmarcResult != null)
+                                {
+                                    <div class="mt-2 alert @(DmarcSuccess ? "alert-success" : "alert-warning")">
+                                        @DmarcResult
+                                    </div>
+                                }
                             </details>
                         </div>
                     </div>
@@ -227,7 +229,7 @@
                                 @if (!string.IsNullOrEmpty(DkimPublicKeyRecord))
                                 {
                                     <div class="alert alert-secondary" style="word-break: break-all; font-family: monospace;">
-                                        <strong>Host/Name:</strong> @(DkimSelector ?? "selector")._domainkey<br/>
+                                        <strong>Host/Name:</strong> @(DkimSelector ?? "selector")._domainkey<br />
                                         <strong>Value:</strong> @DkimPublicKeyRecord
                                     </div>
                                 }
@@ -436,7 +438,7 @@
                 EnableSpfCheck = settings.Value?.GetBoolean("EnableSpfCheck") ?? false;
                 EnableDmarcCheck = settings.Value?.GetBoolean("EnableDmarcCheck") ?? false;
                 EnableDkimCheck = settings.Value?.GetBoolean("EnableDkimCheck") ?? false;
-                
+
                 DkimPrivateKey = settings.Value?.GetString("DkimPrivateKey");
                 DkimSelector = settings.Value?.GetString("DkimSelector");
                 if (string.IsNullOrEmpty(DkimSelector)) DkimSelector = "default";
@@ -469,7 +471,7 @@
 
             var table = Tables.GetTableClient(TableName);
             await table.CreateIfNotExistsAsync();
-            
+
             var entity = new TableEntity(PK, RKSettings)
             {
                 { "DkimPrivateKey", DkimPrivateKey },
@@ -800,7 +802,7 @@
                 var subjectPublicKeyInfo = Org.BouncyCastle.X509.SubjectPublicKeyInfoFactory.CreateSubjectPublicKeyInfo(rsaPublic);
                 var bytes = subjectPublicKeyInfo.GetEncoded();
                 var base64 = Convert.ToBase64String(bytes);
-                
+
                 DkimPublicKeyRecord = $"v=DKIM1; k=rsa; p={base64}";
             }
             else

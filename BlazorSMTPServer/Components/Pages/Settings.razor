@@ -143,6 +143,22 @@
 
                     <div class="card shadow-sm mb-4">
                         <div class="card-body">
+                            <details>
+                                <summary class="h5 card-title mb-3" style="cursor: pointer">MX Record</summary>
+                                <p>Proper Value: <code>10 @ServerName</code></p>
+                                <RadzenButton Text="Verify MX Record" Click="@VerifyMX" IsBusy="@IsVerifyingMX" />
+                                @if (MxResult != null)
+                                {
+                                    <div class="mt-2 alert @(MxSuccess ? "alert-success" : "alert-warning")">
+                                        @MxResult
+                                    </div>
+                                }
+                            </details>
+                        </div>
+                    </div>
+
+                    <div class="card shadow-sm mb-4">
+                        <div class="card-body">
                               <details>
                                 <summary class="h5 card-title mb-3" style="cursor: pointer">SPF Record</summary>
                             <p>Proper Value: <code>v=spf1 mx a:@ServerName -all</code></p>
@@ -358,6 +374,10 @@
 
     bool EnableSpamFiltering; bool EnableSpfCheck; bool EnableDmarcCheck; bool EnableDkimCheck; bool EnableDkimSigning;
 
+    bool IsVerifyingMX;
+    string? MxResult;
+    bool MxSuccess;
+
     bool IsVerifyingSPF;
     string? SpfResult;
     bool SpfSuccess;
@@ -488,6 +508,53 @@
         root["AppPassword"] = value;
         var options = new JsonSerializerOptions { WriteIndented = true };
         await File.WriteAllTextAsync(path, root.ToJsonString(options));
+    }
+
+    async Task VerifyMX()
+    {
+        IsVerifyingMX = true;
+        MxResult = null;
+        try
+        {
+            if (string.IsNullOrEmpty(ServerName))
+            {
+                MxResult = "Server Name (Domain) is not set.";
+                MxSuccess = false;
+                return;
+            }
+
+            var dnsClient = new DnsClient(HttpClientFactory);
+            var response = await dnsClient.DnsQueryAsync(new DnsQuestion(ServerName, DnsRecordType.MX), DnsProvider.Google);
+
+            if (response != null && response.Answer != null)
+            {
+                var mxRecords = response.Answer.Where(r => r.Type == DnsRecordType.MX).ToList();
+                if (mxRecords.Any())
+                {
+                    MxResult = $"Found: {string.Join("; ", mxRecords.Select(r => r.Data))}";
+                    MxSuccess = true;
+                }
+                else
+                {
+                    MxResult = "No MX records found.";
+                    MxSuccess = false;
+                }
+            }
+            else
+            {
+                MxResult = "No DNS records found.";
+                MxSuccess = false;
+            }
+        }
+        catch (Exception ex)
+        {
+            MxResult = $"Error: {ex.Message}";
+            MxSuccess = false;
+        }
+        finally
+        {
+            IsVerifyingMX = false;
+        }
     }
 
     async Task VerifySPF()

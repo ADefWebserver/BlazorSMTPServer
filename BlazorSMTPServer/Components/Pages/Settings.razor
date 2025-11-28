@@ -143,7 +143,8 @@
 
                     <div class="card shadow-sm mb-4">
                         <div class="card-body">
-                            <h5 class="card-title">SPF Record</h5>
+                              <details>
+                                <summary class="h5 card-title mb-3" style="cursor: pointer">SPF Record</summary>
                             <p>Proper Value: <code>v=spf1 mx a:@ServerName -all</code></p>
                             <RadzenButton Text="Verify SPF" Click="@VerifySPF" IsBusy="@IsVerifyingSPF" />
                             @if (SpfResult != null)
@@ -152,13 +153,15 @@
                                     @SpfResult
                                 </div>
                             }
+                            </details>
                         </div>
                     </div>
 
                     <div class="card shadow-sm mb-4">
                         <div class="card-body">
-                            <h5 class="card-title">DMARC Record</h5>
-                            <p>Proper Value: <code>v=DMARC1; p=none; rua=mailto:admin@@@ServerName</code></p>
+                            <details>
+                            <summary class="h5 card-title mb-3" style="cursor: pointer">DMARC Record</summary>
+                            <p>Proper Value: <code>v=DMARC1; p=none; rua=mailto:postmaster@@@ServerName</code></p>
                             <RadzenButton Text="Verify DMARC" Click="@VerifyDMARC" IsBusy="@IsVerifyingDMARC" />
                             @if (DmarcResult != null)
                             {
@@ -166,6 +169,7 @@
                                     @DmarcResult
                                 </div>
                             }
+                            </details>
                         </div>
                     </div>
 
@@ -189,18 +193,14 @@
                                     </div>
                                     <div class="col-12 col-md-6">
                                         <label class="form-label">DKIM Domain</label>
-                                        <input class="form-control" @bind="DkimDomain" placeholder="e.g. example.com" />
+                                        <input class="form-control" @bind="DkimDomain" placeholder="e.g. @DkimDomain" />
                                     </div>
                                     <div class="col-12">
                                         <label class="form-label">DKIM Private Key (RSA)</label>
                                         <div class="mb-2">
                                             <button type="button" class="btn btn-secondary btn-sm" @onclick="GenerateNewDkimKeys">Create New Keys</button>
                                         </div>
-                                        <textarea class="form-control" @bind="DkimPrivateKey" rows="10" style="font-family: monospace; font-size: 0.8rem;"></textarea>
-                                        <div class="form-text">Paste your RSA private key here (PEM format).</div>
-                                    </div>
-                                    <div class="col-12">
-                                        <button class="btn btn-primary" @onclick="SaveAsync" disabled="@(Saving || IsLoading)">Save Settings</button>
+                                        <textarea class="form-control" @bind="DkimPrivateKey" rows="5" style="font-family: monospace; font-size: 0.8rem;"></textarea>
                                     </div>
                                 </div>
 
@@ -221,7 +221,9 @@
                                         Configure and save DKIM settings above to generate the DNS record.
                                     </div>
                                 }
-                                <button class="btn btn-outline-primary" @onclick="GenerateDkimDnsRecord">Generate/Refresh DNS Record</button>
+                                <div class="col-12">
+                                    <button class="btn btn-primary" @onclick="SaveAsync" disabled="@(Saving || IsLoading)">Save Settings</button>
+                                </div>
                             </details>
                         </div>
                     </div>
@@ -417,7 +419,9 @@
                 
                 DkimPrivateKey = settings.Value?.GetString("DkimPrivateKey");
                 DkimSelector = settings.Value?.GetString("DkimSelector");
+                if (string.IsNullOrEmpty(DkimSelector)) DkimSelector = "default";
                 DkimDomain = settings.Value?.GetString("DkimDomain");
+                if (string.IsNullOrEmpty(DkimDomain)) DkimDomain = ServerName;
                 EnableDkimSigning = settings.Value?.GetBoolean("EnableDkimSigning") ?? false;
 
                 if (!string.IsNullOrEmpty(DkimPrivateKey))

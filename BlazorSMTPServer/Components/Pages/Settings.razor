@@ -8,6 +8,7 @@
 @using Org.BouncyCastle.Crypto
 @using Org.BouncyCastle.OpenSsl
 @using Org.BouncyCastle.Security
+@using Org.BouncyCastle.Crypto.Generators
 @using System.IO
 @inject TableServiceClient Tables
 @inject ILogger<Settings> Log
@@ -143,7 +144,7 @@
                     <div class="card shadow-sm mb-4">
                         <div class="card-body">
                             <h5 class="card-title">SPF Record</h5>
-                            <p>Proper Value: <code>v=spf1 mx -all</code></p>
+                            <p>Proper Value: <code>v=spf1 mx a:@ServerName -all</code></p>
                             <RadzenButton Text="Verify SPF" Click="@VerifySPF" IsBusy="@IsVerifyingSPF" />
                             @if (SpfResult != null)
                             {
@@ -192,6 +193,9 @@
                                     </div>
                                     <div class="col-12">
                                         <label class="form-label">DKIM Private Key (RSA)</label>
+                                        <div class="mb-2">
+                                            <button type="button" class="btn btn-secondary btn-sm" @onclick="GenerateNewDkimKeys">Create New Keys</button>
+                                        </div>
                                         <textarea class="form-control" @bind="DkimPrivateKey" rows="10" style="font-family: monospace; font-size: 0.8rem;"></textarea>
                                         <div class="form-text">Paste your RSA private key here (PEM format).</div>
                                     </div>
@@ -648,6 +652,44 @@
         }
         catch { }
         return entity.Timestamp;
+    }
+
+    void GenerateNewDkimKeys()
+    {
+        try
+        {
+            var generator = new RsaKeyPairGenerator();
+            var secureRandom = new SecureRandom();
+            var keyGenerationParameters = new KeyGenerationParameters(secureRandom, 2048);
+            generator.Init(keyGenerationParameters);
+            var keyPair = generator.GenerateKeyPair();
+
+            var privateKey = keyPair.Private;
+            // var publicKey = keyPair.Public; // Not needed directly, derived from private
+
+            // Convert private key to PEM format
+            using var textWriter = new StringWriter();
+            var pemWriter = new PemWriter(textWriter);
+            pemWriter.WriteObject(privateKey);
+            DkimPrivateKey = textWriter.ToString();
+
+            // Set default selector/domain if empty
+            if (string.IsNullOrEmpty(DkimSelector))
+            {
+                DkimSelector = "default";
+            }
+            if (string.IsNullOrEmpty(DkimDomain) && !string.IsNullOrEmpty(ServerName))
+            {
+                DkimDomain = ServerName;
+            }
+
+            // Generate public key record
+            GenerateDkimDnsRecord();
+        }
+        catch (Exception ex)
+        {
+            Error = $"Error generating keys: {ex.Message}";
+        }
     }
 
     void GenerateDkimDnsRecord()

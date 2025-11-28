@@ -3,11 +3,14 @@
 @using System.Text.Json
 @using System.Text.Json.Nodes
 @using BlazorSMTPServer.Classes
+@using Nager.Dns
+@using Nager.Dns.Models
 @inject TableServiceClient Tables
 @inject ILogger<Settings> Log
 @inject IConfiguration Config
 @inject IWebHostEnvironment Env
 @inject DialogService DialogService
+@inject IHttpClientFactory HttpClientFactory
 
 <div>
     <h1 class="h3 mb-0">Settings</h1>
@@ -128,7 +131,39 @@
             </RadzenTabsItem>
 
             <RadzenTabsItem Text="DNS">
-                <div class="p-3 text-muted">DNS configuration guidance or settings can be added here.</div>
+                <div class="p-3">
+                    <div class="alert alert-info">
+                        See this <a href="https://smartreach.io/blog/how-to-set-up-spf-dkim-dmarc-guide/" target="_blank">guide</a> as to what you need to do to configure the DNS settings for your email server.
+                    </div>
+
+                    <div class="card shadow-sm mb-4">
+                        <div class="card-body">
+                            <h5 class="card-title">SPF Record</h5>
+                            <p>Proper Value: <code>v=spf1 mx -all</code></p>
+                            <RadzenButton Text="Verify SPF" Click="@VerifySPF" IsBusy="@IsVerifyingSPF" />
+                            @if (SpfResult != null)
+                            {
+                                <div class="mt-2 alert @(SpfSuccess ? "alert-success" : "alert-warning")">
+                                    @SpfResult
+                                </div>
+                            }
+                        </div>
+                    </div>
+
+                    <div class="card shadow-sm mb-4">
+                        <div class="card-body">
+                            <h5 class="card-title">DMARC Record</h5>
+                            <p>Proper Value: <code>v=DMARC1; p=none; rua=mailto:admin@@@ServerName</code></p>
+                            <RadzenButton Text="Verify DMARC" Click="@VerifyDMARC" IsBusy="@IsVerifyingDMARC" />
+                            @if (DmarcResult != null)
+                            {
+                                <div class="mt-2 alert @(DmarcSuccess ? "alert-success" : "alert-warning")">
+                                    @DmarcResult
+                                </div>
+                            }
+                        </div>
+                    </div>
+                </div>
             </RadzenTabsItem>
 
             <RadzenTabsItem Text="SPAM">
@@ -256,6 +291,14 @@
 
     bool EnableSpamFiltering; bool EnableSpfCheck; bool EnableDmarcCheck; bool EnableDkimCheck;
 
+    bool IsVerifyingSPF;
+    string? SpfResult;
+    bool SpfSuccess;
+
+    bool IsVerifyingDMARC;
+    string? DmarcResult;
+    bool DmarcSuccess;
+
     async Task OpenTestServerDialog()
     {
         await DialogService.OpenAsync<SmtpTest>("SMTP Server Test",
@@ -351,6 +394,101 @@
         root["AppPassword"] = value;
         var options = new JsonSerializerOptions { WriteIndented = true };
         await File.WriteAllTextAsync(path, root.ToJsonString(options));
+    }
+
+    async Task VerifySPF()
+    {
+        IsVerifyingSPF = true;
+        SpfResult = null;
+        try
+        {
+            if (string.IsNullOrEmpty(ServerName))
+            {
+                SpfResult = "Server Name (Domain) is not set.";
+                SpfSuccess = false;
+                return;
+            }
+
+            var dnsClient = new DnsClient(HttpClientFactory);
+            var response = await dnsClient.DnsQueryAsync(new DnsQuestion(ServerName, DnsRecordType.TXT), DnsProvider.Google);
+
+            if (response != null && response.Answer != null)
+            {
+                // TXT records might be quoted
+                var spfRecord = response.Answer.FirstOrDefault(r => r.Data != null && r.Data.Trim('"').StartsWith("v=spf1"));
+                if (spfRecord != null)
+                {
+                    SpfResult = $"Found: {spfRecord.Data}";
+                    SpfSuccess = true;
+                }
+                else
+                {
+                    SpfResult = "No SPF record found.";
+                    SpfSuccess = false;
+                }
+            }
+            else
+            {
+                SpfResult = "No DNS records found.";
+                SpfSuccess = false;
+            }
+        }
+        catch (Exception ex)
+        {
+            SpfResult = $"Error: {ex.Message}";
+            SpfSuccess = false;
+        }
+        finally
+        {
+            IsVerifyingSPF = false;
+        }
+    }
+
+    async Task VerifyDMARC()
+    {
+        IsVerifyingDMARC = true;
+        DmarcResult = null;
+        try
+        {
+            if (string.IsNullOrEmpty(ServerName))
+            {
+                DmarcResult = "Server Name (Domain) is not set.";
+                DmarcSuccess = false;
+                return;
+            }
+
+            var dnsClient = new DnsClient(HttpClientFactory);
+            var response = await dnsClient.DnsQueryAsync(new DnsQuestion($"_dmarc.{ServerName}", DnsRecordType.TXT), DnsProvider.Google);
+
+            if (response != null && response.Answer != null)
+            {
+                var dmarcRecord = response.Answer.FirstOrDefault(r => r.Data != null && r.Data.Trim('"').StartsWith("v=DMARC1"));
+                if (dmarcRecord != null)
+                {
+                    DmarcResult = $"Found: {dmarcRecord.Data}";
+                    DmarcSuccess = true;
+                }
+                else
+                {
+                    DmarcResult = "No DMARC record found.";
+                    DmarcSuccess = false;
+                }
+            }
+            else
+            {
+                DmarcResult = "No DNS records found.";
+                DmarcSuccess = false;
+            }
+        }
+        catch (Exception ex)
+        {
+            DmarcResult = $"Error: {ex.Message}";
+            DmarcSuccess = false;
+        }
+        finally
+        {
+            IsVerifyingDMARC = false;
+        }
     }
 
     async Task LoadSpamLogsAsync()

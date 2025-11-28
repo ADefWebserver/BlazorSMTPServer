@@ -5,6 +5,10 @@
 @using BlazorSMTPServer.Classes
 @using Nager.Dns
 @using Nager.Dns.Models
+@using Org.BouncyCastle.Crypto
+@using Org.BouncyCastle.OpenSsl
+@using Org.BouncyCastle.Security
+@using System.IO
 @inject TableServiceClient Tables
 @inject ILogger<Settings> Log
 @inject IConfiguration Config
@@ -163,6 +167,60 @@
                             }
                         </div>
                     </div>
+
+                    <div class="card shadow-sm mb-4">
+                        <div class="card-body">
+                            <details>
+                                <summary class="h5 card-title mb-3" style="cursor: pointer">DKIM Configuration & DNS Record</summary>
+                                <div class="row g-3 mt-2">
+                                    <div class="col-12">
+                                        <div class="form-check form-switch">
+                                            <input class="form-check-input" type="checkbox" id="enableDkimSigning"
+                                                   @bind="EnableDkimSigning" />
+                                            <label class="form-check-label" for="enableDkimSigning">
+                                                Enable DKIM Signing
+                                            </label>
+                                        </div>
+                                    </div>
+                                    <div class="col-12 col-md-6">
+                                        <label class="form-label">DKIM Selector</label>
+                                        <input class="form-control" @bind="DkimSelector" placeholder="e.g. default" />
+                                    </div>
+                                    <div class="col-12 col-md-6">
+                                        <label class="form-label">DKIM Domain</label>
+                                        <input class="form-control" @bind="DkimDomain" placeholder="e.g. example.com" />
+                                    </div>
+                                    <div class="col-12">
+                                        <label class="form-label">DKIM Private Key (RSA)</label>
+                                        <textarea class="form-control" @bind="DkimPrivateKey" rows="10" style="font-family: monospace; font-size: 0.8rem;"></textarea>
+                                        <div class="form-text">Paste your RSA private key here (PEM format).</div>
+                                    </div>
+                                    <div class="col-12">
+                                        <button class="btn btn-primary" @onclick="SaveAsync" disabled="@(Saving || IsLoading)">Save Settings</button>
+                                    </div>
+                                </div>
+
+                                <hr class="my-4" />
+
+                                <h5 class="card-title">DKIM Record (Public Key)</h5>
+                                <p>Add this TXT record to your DNS settings.</p>
+                                @if (!string.IsNullOrEmpty(DkimPublicKeyRecord))
+                                {
+                                    <div class="alert alert-secondary" style="word-break: break-all; font-family: monospace;">
+                                        <strong>Host/Name:</strong> @(DkimSelector ?? "selector")._domainkey<br/>
+                                        <strong>Value:</strong> @DkimPublicKeyRecord
+                                    </div>
+                                }
+                                else
+                                {
+                                    <div class="alert alert-warning">
+                                        Configure and save DKIM settings above to generate the DNS record.
+                                    </div>
+                                }
+                                <button class="btn btn-outline-primary" @onclick="GenerateDkimDnsRecord">Generate/Refresh DNS Record</button>
+                            </details>
+                        </div>
+                    </div>
                 </div>
             </RadzenTabsItem>
 
@@ -274,6 +332,8 @@
                 </div>
             </RadzenTabsItem>
 
+
+
         </Tabs>
     </RadzenTabs>
 </div>
@@ -285,11 +345,12 @@
 
     string? ServerName; string? Ports; string? AllowedRecipient; string? AllowedUsername; string? AllowedPassword; string?
     AppPassword; string? SpamhausKey; string? SpamhausAccount;
+    string? DkimPrivateKey; string? DkimSelector; string? DkimDomain;
     bool Saved; string? Error;
 
     bool IsLoading; bool Saving; bool ShowAllowedPassword; bool ShowSpamhausKey; bool ShowAppPassword;
 
-    bool EnableSpamFiltering; bool EnableSpfCheck; bool EnableDmarcCheck; bool EnableDkimCheck;
+    bool EnableSpamFiltering; bool EnableSpfCheck; bool EnableDmarcCheck; bool EnableDkimCheck; bool EnableDkimSigning;
 
     bool IsVerifyingSPF;
     string? SpfResult;
@@ -298,6 +359,8 @@
     bool IsVerifyingDMARC;
     string? DmarcResult;
     bool DmarcSuccess;
+
+    string? DkimPublicKeyRecord;
 
     async Task OpenTestServerDialog()
     {
@@ -347,6 +410,16 @@
                 EnableSpfCheck = settings.Value?.GetBoolean("EnableSpfCheck") ?? false;
                 EnableDmarcCheck = settings.Value?.GetBoolean("EnableDmarcCheck") ?? false;
                 EnableDkimCheck = settings.Value?.GetBoolean("EnableDkimCheck") ?? false;
+                
+                DkimPrivateKey = settings.Value?.GetString("DkimPrivateKey");
+                DkimSelector = settings.Value?.GetString("DkimSelector");
+                DkimDomain = settings.Value?.GetString("DkimDomain");
+                EnableDkimSigning = settings.Value?.GetBoolean("EnableDkimSigning") ?? false;
+
+                if (!string.IsNullOrEmpty(DkimPrivateKey))
+                {
+                    GenerateDkimDnsRecord();
+                }
             }
             AppPassword = Config["AppPassword"];
         }
@@ -365,6 +438,19 @@
         try
         {
             await SaveAppPasswordToAppSettingsAsync(AppPassword ?? string.Empty);
+
+            var table = Tables.GetTableClient(TableName);
+            await table.CreateIfNotExistsAsync();
+            
+            var entity = new TableEntity(PK, RKSettings)
+            {
+                { "DkimPrivateKey", DkimPrivateKey },
+                { "DkimSelector", DkimSelector },
+                { "DkimDomain", DkimDomain },
+                { "EnableDkimSigning", EnableDkimSigning }
+            };
+            await table.UpsertEntityAsync(entity, TableUpdateMode.Merge);
+
             Saved = true;
         }
         catch (Exception ex) { Error = ex.Message; Log.LogError(ex, "Save failed"); }
@@ -562,5 +648,56 @@
         }
         catch { }
         return entity.Timestamp;
+    }
+
+    void GenerateDkimDnsRecord()
+    {
+        if (string.IsNullOrEmpty(DkimPrivateKey))
+        {
+            DkimPublicKeyRecord = null;
+            return;
+        }
+
+        try
+        {
+            using var reader = new StringReader(DkimPrivateKey);
+            var pemReader = new PemReader(reader);
+            var keyObject = pemReader.ReadObject();
+
+            AsymmetricKeyParameter? privateKey = null;
+
+            if (keyObject is AsymmetricCipherKeyPair keyPair)
+            {
+                privateKey = keyPair.Private;
+            }
+            else if (keyObject is AsymmetricKeyParameter keyParam && keyParam.IsPrivate)
+            {
+                privateKey = keyParam;
+            }
+
+            if (privateKey == null)
+            {
+                DkimPublicKeyRecord = "Invalid private key format.";
+                return;
+            }
+
+            if (privateKey is Org.BouncyCastle.Crypto.Parameters.RsaPrivateCrtKeyParameters rsaPrivate)
+            {
+                var rsaPublic = new Org.BouncyCastle.Crypto.Parameters.RsaKeyParameters(false, rsaPrivate.Modulus, rsaPrivate.PublicExponent);
+                var subjectPublicKeyInfo = Org.BouncyCastle.X509.SubjectPublicKeyInfoFactory.CreateSubjectPublicKeyInfo(rsaPublic);
+                var bytes = subjectPublicKeyInfo.GetEncoded();
+                var base64 = Convert.ToBase64String(bytes);
+                
+                DkimPublicKeyRecord = $"v=DKIM1; k=rsa; p={base64}";
+            }
+            else
+            {
+                DkimPublicKeyRecord = "Only RSA keys are supported for this display.";
+            }
+        }
+        catch (Exception ex)
+        {
+            DkimPublicKeyRecord = $"Error parsing key: {ex.Message}";
+        }
     }
 }

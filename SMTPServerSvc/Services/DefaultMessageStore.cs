@@ -8,6 +8,11 @@ using System.Buffers;
 using System.Text;
 using SMTPServerSvc.Configuration;
 using System.Linq;
+using MimeKit;
+using MimeKit.Cryptography;
+using Org.BouncyCastle.OpenSsl;
+using Org.BouncyCastle.Crypto;
+using System.IO;
 
 namespace SMTPServerSvc.Services;
 
@@ -19,6 +24,7 @@ public class DefaultMessageStore : MessageStore
     private readonly BlobServiceClient? _blobServiceClient;
     private readonly BlobContainerClient? _containerClient;
     private readonly TableClient? _spamLogTableClient;
+    private readonly TableClient? _settingsTableClient;
     private readonly ILogger<DefaultMessageStore> _logger;
     private readonly SmtpServerConfiguration _configuration;
     private readonly MailAuthenticationService _authService;
@@ -45,6 +51,10 @@ public class DefaultMessageStore : MessageStore
             _spamLogTableClient = tableServiceClient.GetTableClient("spamlogs");
             _spamLogTableClient.CreateIfNotExists();
 
+            // Initialize settings table
+            _settingsTableClient = tableServiceClient.GetTableClient("SMTPSettings");
+            _settingsTableClient.CreateIfNotExists();
+
             _isAvailable = true;
 
             _logger.LogInformation("DefaultMessageStore initialized successfully");
@@ -54,6 +64,7 @@ public class DefaultMessageStore : MessageStore
             _logger.LogWarning(ex, "Failed to initialize storage. Messages will be logged but not stored.");
             _containerClient = null!;
             _spamLogTableClient = null;
+            _settingsTableClient = null;
             _isAvailable = false;
         }
     }
@@ -190,23 +201,51 @@ public class DefaultMessageStore : MessageStore
             }
             // ******************************************************************************************************************************
 
-            // Add metadata preamble (custom headers) followed by a blank line, then original message content
-            var enhancedContent = new StringBuilder();
-            enhancedContent.AppendLine($"X-SMTP-Server-Received: {DateTime.UtcNow:R}");
-            enhancedContent.AppendLine($"X-SMTP-Server-Session: {sessionId}");
-            enhancedContent.AppendLine($"X-SMTP-Server-Transaction: {transactionId}");
-            enhancedContent.AppendLine($"X-SMTP-Server-BlobName: {blobPath}");
-            enhancedContent.AppendLine($"X-SMTP-Server-Recipient-User: {recipientUser}");
-            if (isSpam) enhancedContent.AppendLine("X-SMTP-Server-Spam: True");
-            if (dkimPass) enhancedContent.AppendLine("X-SMTP-Server-DKIM: Pass");
-            if (dmarcPass) enhancedContent.AppendLine("X-SMTP-Server-DMARC: Pass");
-            enhancedContent.AppendLine();
-            enhancedContent.Append(messageContent);
+            // Parse message for modification
+            var message = MimeMessage.Load(new MemoryStream(buffer.ToArray()));
+
+            // Add metadata headers
+            message.Headers.Add("X-SMTP-Server-Received", DateTime.UtcNow.ToString("R"));
+            message.Headers.Add("X-SMTP-Server-Session", sessionId?.ToString() ?? "unknown");
+            message.Headers.Add("X-SMTP-Server-Transaction", transactionId);
+            message.Headers.Add("X-SMTP-Server-BlobName", blobPath);
+            message.Headers.Add("X-SMTP-Server-Recipient-User", recipientUser);
+            if (isSpam) message.Headers.Add("X-SMTP-Server-Spam", "True");
+            if (dkimPass) message.Headers.Add("X-SMTP-Server-DKIM", "Pass");
+            if (dmarcPass) message.Headers.Add("X-SMTP-Server-DMARC", "Pass");
+
+            // DKIM Signing
+            if (_settingsTableClient != null)
+            {
+                try
+                {
+                    var settings = await _settingsTableClient.GetEntityIfExistsAsync<TableEntity>("SmtpServer", "Current");
+                    if (settings.HasValue && settings.Value != null)
+                    {
+                        var enableDkimSigning = settings.Value.GetBoolean("EnableDkimSigning") ?? false;
+                        var dkimPrivateKey = settings.Value.GetString("DkimPrivateKey");
+                        var dkimSelector = settings.Value.GetString("DkimSelector");
+                        var dkimDomain = settings.Value.GetString("DkimDomain");
+
+                        if (enableDkimSigning && !string.IsNullOrEmpty(dkimPrivateKey) && !string.IsNullOrEmpty(dkimSelector) && !string.IsNullOrEmpty(dkimDomain))
+                        {
+                            _logger.LogInformation("Signing message with DKIM for domain {Domain}, selector {Selector}", dkimDomain, dkimSelector);
+                            SignMessage(message, dkimDomain, dkimSelector, dkimPrivateKey);
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error reading settings or signing message");
+                }
+            }
 
             // Upload to blob storage under the per-user folder
             var blobClient = containerClient.GetBlobClient(blobPath);
 
-            using var stream = new MemoryStream(Encoding.UTF8.GetBytes(enhancedContent.ToString()));
+            using var stream = new MemoryStream();
+            await message.WriteToAsync(stream);
+            stream.Position = 0;
             await blobClient.UploadAsync(stream, overwrite: true, cancellationToken);
 
             // Set metadata (include Subject/From so the list view can show them without downloading)
@@ -290,6 +329,43 @@ public class DefaultMessageStore : MessageStore
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to log spam entry to table storage");
+        }
+    }
+
+    private void SignMessage(MimeMessage message, string domain, string selector, string privateKeyPem)
+    {
+        try
+        {
+            using var reader = new StringReader(privateKeyPem);
+            var pemReader = new PemReader(reader);
+            var keyObject = pemReader.ReadObject();
+
+            AsymmetricKeyParameter? privateKey = null;
+
+            if (keyObject is AsymmetricCipherKeyPair keyPair)
+                privateKey = keyPair.Private;
+            else if (keyObject is AsymmetricKeyParameter keyParam && keyParam.IsPrivate)
+                privateKey = keyParam;
+
+            if (privateKey == null)
+            {
+                _logger.LogWarning("Invalid DKIM private key. Skipping signing.");
+                return;
+            }
+
+            var headers = new HeaderId[] { HeaderId.From, HeaderId.Subject, HeaderId.Date, HeaderId.To };
+            var signer = new DkimSigner(privateKey, domain, selector)
+            {
+                SignatureAlgorithm = DkimSignatureAlgorithm.RsaSha256,
+                AgentOrUserIdentifier = "@" + domain
+            };
+
+            message.Prepare(EncodingConstraint.SevenBit);
+            signer.Sign(message, headers);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to sign message with DKIM");
         }
     }
 

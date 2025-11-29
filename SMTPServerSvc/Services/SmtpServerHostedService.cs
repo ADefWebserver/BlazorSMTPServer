@@ -49,7 +49,10 @@ public class SmtpServerHostedService : BackgroundService
             // Add configured ports
             foreach (var port in _configuration.Ports)
             {
-                optionsBuilder.Port(port);
+                optionsBuilder.Endpoint(builder =>
+                    builder
+                        .Port(port, isSecure: false)
+                        .AllowUnsecureAuthentication());
             }
 
             var options = optionsBuilder.Build();

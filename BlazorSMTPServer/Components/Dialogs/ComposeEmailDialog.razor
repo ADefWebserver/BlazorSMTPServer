@@ -226,7 +226,7 @@
             using var client = new SmtpClient(smtpHost, port)
             {
                 EnableSsl = false,
-                Timeout = 5000
+                Timeout = 50000
             };
 
             if (!string.IsNullOrWhiteSpace(username) && !string.IsNullOrWhiteSpace(password))

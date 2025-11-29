@@ -42,6 +42,7 @@ internal class Program
         builder.Services.AddSingleton(smtpConfig);
 
         builder.Services.AddSingleton<IDnsResolver, DnsResolver>();
+        builder.Services.AddSingleton<DnsClient.ILookupClient, DnsClient.LookupClient>();
         builder.Services.AddSingleton<MailAuthenticationService>();
 
         // Custom logger provider (table name comes from config)

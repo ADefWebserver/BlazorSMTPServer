@@ -28,6 +28,11 @@ public class SmtpServerConfiguration
     public string AllowedRecipient { get; set; } = string.Empty;
 
     /// <summary>
+    /// The domain that this server handles locally. Emails to other domains will be relayed.
+    /// </summary>
+    public string Domain { get; set; } = string.Empty;
+
+    /// <summary>
     /// Allowed relay username
     /// </summary>
     public string AllowedUsername { get; set; } = string.Empty;
@@ -62,6 +67,26 @@ public class SmtpServerConfiguration
     /// Enable DKIM check
     /// </summary>
     public bool EnableDkimCheck { get; set; } = false;
+
+    /// <summary>
+    /// Enable DKIM signing for outgoing emails
+    /// </summary>
+    public bool EnableDkimSigning { get; set; } = false;
+
+    /// <summary>
+    /// DKIM Domain
+    /// </summary>
+    public string DkimDomain { get; set; } = string.Empty;
+
+    /// <summary>
+    /// DKIM Selector
+    /// </summary>
+    public string DkimSelector { get; set; } = string.Empty;
+
+    /// <summary>
+    /// DKIM Private Key (PEM format)
+    /// </summary>
+    public string DkimPrivateKey { get; set; } = string.Empty;
 
     /// <summary>
     /// If true, enables spam filtering.

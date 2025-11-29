@@ -1,23 +1,26 @@
 using Azure.Data.Tables;
 using Azure.Storage.Blobs;
+using DnsClient;
+using MailKit.Net.Smtp;
 using Microsoft.Extensions.Logging;
+using MimeKit;
+using MimeKit.Cryptography;
+using Org.BouncyCastle.Crypto;
+using Org.BouncyCastle.OpenSsl;
 using SmtpServer;
 using SmtpServer.Protocol;
 using SmtpServer.Storage;
-using System.Buffers;
-using System.Text;
 using SMTPServerSvc.Configuration;
-using System.Linq;
-using MimeKit;
-using MimeKit.Cryptography;
-using Org.BouncyCastle.OpenSsl;
-using Org.BouncyCastle.Crypto;
+using System.Buffers;
 using System.IO;
+using System.Linq;
+using System.Text;
+using SmtpResponse = SmtpServer.Protocol.SmtpResponse;
 
 namespace SMTPServerSvc.Services;
 
 /// <summary>
-/// Message store implementation that saves email messages to Azure Blob Storage
+/// Message store implementation that saves email messages to Azure Blob Storage and relays outgoing mail
 /// </summary>
 public class DefaultMessageStore : MessageStore
 {
@@ -28,15 +31,23 @@ public class DefaultMessageStore : MessageStore
     private readonly ILogger<DefaultMessageStore> _logger;
     private readonly SmtpServerConfiguration _configuration;
     private readonly MailAuthenticationService _authService;
+    private readonly ILookupClient _lookupClient;
     private readonly string _containerName;
     private readonly bool _isAvailable;
 
-    public DefaultMessageStore(BlobServiceClient blobServiceClient, TableServiceClient tableServiceClient, SmtpServerConfiguration configuration, ILogger<DefaultMessageStore> logger, MailAuthenticationService authService)
+    public DefaultMessageStore(
+        BlobServiceClient blobServiceClient, 
+        TableServiceClient tableServiceClient, 
+        SmtpServerConfiguration configuration, 
+        ILogger<DefaultMessageStore> logger, 
+        MailAuthenticationService authService,
+        ILookupClient lookupClient)
     {
         _blobServiceClient = blobServiceClient;
         _logger = logger;
         _configuration = configuration;
         _authService = authService;
+        _lookupClient = lookupClient;
         _containerName = "email-messages";
 
         try
@@ -73,241 +84,277 @@ public class DefaultMessageStore : MessageStore
     {
         try
         {
-            var sessionId = context.Properties.ContainsKey("SessionId") ? context.Properties["SessionId"] : "unknown";
+            var sessionId = context.Properties.ContainsKey("SessionId") ? context.Properties["SessionId"]?.ToString() ?? "unknown" : "unknown";
             var transactionId = transaction.GetHashCode().ToString();
 
-            // Check for spam tag
-            bool isSpam = context.Properties.ContainsKey("IsSpam") && (bool)context.Properties["IsSpam"];
+            _logger.LogInformation("Processing message for session {SessionId}, transaction {TransactionId}, size {MessageSize} bytes.",
+                sessionId, transactionId, buffer.Length);
 
-            _logger.LogInformation("Saving message for session {SessionId}, transaction {TransactionId}, size {MessageSize} bytes. IsSpam: {IsSpam}",
-                sessionId, transactionId, buffer.Length, isSpam);
+            // Parse message
+            using var stream = new MemoryStream(buffer.ToArray());
+            var message = await MimeMessage.LoadAsync(stream, cancellationToken);
 
-            // If blob storage is not available, log message content and return success
-            if (!_isAvailable || _containerClient == null)
+            // Identify recipients
+            var localRecipients = new List<MailboxAddress>();
+            var remoteRecipients = new List<MailboxAddress>();
+
+            void Classify(IEnumerable<InternetAddress> addresses)
             {
-                _logger.LogWarning("Blob storage unavailable. Message content will be logged only:");
-
-                // Convert buffer to string for logging
-                var logMessageContent = Encoding.UTF8.GetString(buffer.ToArray());
-                _logger.LogInformation("Message Content (Session {SessionId}):\n{MessageContent}", sessionId, logMessageContent);
-
-                return SmtpResponse.Ok; // Still return OK to not break SMTP flow
-            }
-
-            // Get the correct container client
-            var containerClient = isSpam ? _blobServiceClient!.GetBlobContainerClient(_containerName) : _containerClient;
-            await containerClient.CreateIfNotExistsAsync(cancellationToken: cancellationToken);
-
-            // Determine recipient user folder (first recipient)
-            string recipientUser = "unknown";
-            try
-            {
-                var firstTo = transaction.To?.OfType<SmtpServer.Mail.IMailbox>().FirstOrDefault();
-                recipientUser = firstTo?.User ?? "unknown";
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Unable to extract recipient user from transaction; defaulting to 'unknown'.");
-            }
-
-            // Sanitize recipient for use as a blob virtual folder
-            string recipientFolder = SanitizeForBlobPath(recipientUser);
-
-            if (isSpam)
-            {
-                // This will force the blob to go into a 'spam' folder
-                // regardless of recipient
-                // if it has been marked as spam
-                recipientFolder = "spam";
-            }
-
-            // Generate unique blob name with timestamp
-            var timestamp = DateTime.UtcNow.ToString("yyyy-MM-dd_HH-mm-ss-fff");
-            var blobName = $"{timestamp}_{sessionId}_{Guid.NewGuid():N}.eml";
-            var blobPath = $"{recipientFolder}/{blobName}";
-
-            // Convert buffer to string for storage
-            var messageContent = Encoding.UTF8.GetString(buffer.ToArray());
-
-            // Extract Subject/From from the ORIGINAL MIME headers
-            static string? HeaderFromOriginal(string content, string key)
-            {
-                using var sr = new StringReader(content);
-                string? l;
-                var prefix = key + ":";
-                while ((l = sr.ReadLine()) != null)
+                foreach (var addr in addresses.OfType<MailboxAddress>())
                 {
-                    if (string.IsNullOrWhiteSpace(l)) break; // end of original headers
-                    if (l.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                    bool isLocal = false;
+                    if (!string.IsNullOrEmpty(_configuration.Domain))
                     {
-                        return l.Substring(prefix.Length).Trim();
+                        isLocal = string.Equals(addr.Domain, _configuration.Domain, StringComparison.OrdinalIgnoreCase);
                     }
-                }
-                return null;
-            }
-
-            var originalSubject = HeaderFromOriginal(messageContent, "Subject") ?? "(no subject)";
-            var originalFrom = HeaderFromOriginal(messageContent, "From") ?? string.Empty;
-
-            // ******************************************************************************************************************************
-            // DKIM & DMARC Validation (Requires full message content)
-            // ******************************************************************************************************************************
-            bool dkimPass = false;
-            bool dmarcPass = false;
-            string? dkimSignature = HeaderFromOriginal(messageContent, "DKIM-Signature");
-
-            if (_configuration.EnableDkimCheck && !string.IsNullOrEmpty(dkimSignature))
-            {
-                dkimPass = await _authService.ValidateDkimAsync(dkimSignature);
-                if (!dkimPass)
-                {
-                    _logger.LogWarning("DKIM Validation Failed for {From}", originalFrom);
-                }
-                else
-                {
-                    _logger.LogInformation("DKIM Validation Passed for {From}", originalFrom);
-                }
-            }
-
-            if (_configuration.EnableDmarcCheck)
-            {
-                // Retrieve SPF result from context (set in DefaultMailboxFilter)
-                bool spfPass = context.Properties.ContainsKey("SpfPass") && (bool)context.Properties["SpfPass"];
-                string fromDomain = context.Properties.ContainsKey("FromDomain") ? (string)context.Properties["FromDomain"] : "";
-
-                // DMARC requires SPF OR DKIM to pass (and align)
-                // Simplified check: if either passed, we consider DMARC passed for now.
-                // Real DMARC requires checking alignment of From domain with SPF/DKIM domains.
-                
-                if (spfPass || dkimPass)
-                {
-                    dmarcPass = true;
-                    _logger.LogInformation("DMARC Check Passed (SPF: {Spf}, DKIM: {Dkim})", spfPass, dkimPass);
-                }
-                else
-                {
-                    // Fetch policy to see if we should reject
-                    if (!string.IsNullOrEmpty(fromDomain))
+                    else if (!string.IsNullOrEmpty(_configuration.AllowedRecipient))
                     {
-                        var policy = await _authService.GetDmarcPolicyAsync(fromDomain);
-                        _logger.LogWarning("DMARC Check Failed for {Domain}. Policy: {Policy}", fromDomain, policy ?? "none");
-                        
-                        if (policy == "reject" || policy == "quarantine")
-                        {
-                            isSpam = true; // Mark as spam
-                        }
+                        var allowedDomain = _configuration.AllowedRecipient.Split('@').LastOrDefault();
+                        isLocal = string.Equals(addr.Domain, allowedDomain, StringComparison.OrdinalIgnoreCase);
                     }
-                }
-            }
-            // ******************************************************************************************************************************
 
-            // Parse message for modification
-            var message = MimeMessage.Load(new MemoryStream(buffer.ToArray()));
-
-            // Add metadata headers
-            message.Headers.Add("X-SMTP-Server-Received", DateTime.UtcNow.ToString("R"));
-            message.Headers.Add("X-SMTP-Server-Session", sessionId?.ToString() ?? "unknown");
-            message.Headers.Add("X-SMTP-Server-Transaction", transactionId);
-            message.Headers.Add("X-SMTP-Server-BlobName", blobPath);
-            message.Headers.Add("X-SMTP-Server-Recipient-User", recipientUser);
-            if (isSpam) message.Headers.Add("X-SMTP-Server-Spam", "True");
-            if (dkimPass) message.Headers.Add("X-SMTP-Server-DKIM", "Pass");
-            if (dmarcPass) message.Headers.Add("X-SMTP-Server-DMARC", "Pass");
-
-            // DKIM Signing
-            if (_settingsTableClient != null)
-            {
-                try
-                {
-                    var settings = await _settingsTableClient.GetEntityIfExistsAsync<TableEntity>("SmtpServer", "Current");
-                    if (settings.HasValue && settings.Value != null)
-                    {
-                        var enableDkimSigning = settings.Value.GetBoolean("EnableDkimSigning") ?? false;
-                        var dkimPrivateKey = settings.Value.GetString("DkimPrivateKey");
-                        var dkimSelector = settings.Value.GetString("DkimSelector");
-                        var dkimDomain = settings.Value.GetString("DkimDomain");
-
-                        if (enableDkimSigning && !string.IsNullOrEmpty(dkimPrivateKey) && !string.IsNullOrEmpty(dkimSelector) && !string.IsNullOrEmpty(dkimDomain))
-                        {
-                            _logger.LogInformation("Signing message with DKIM for domain {Domain}, selector {Selector}", dkimDomain, dkimSelector);
-                            SignMessage(message, dkimDomain, dkimSelector, dkimPrivateKey);
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Error reading settings or signing message");
+                    if (isLocal) localRecipients.Add(addr);
+                    else remoteRecipients.Add(addr);
                 }
             }
 
-            // Upload to blob storage under the per-user folder
-            var blobClient = containerClient.GetBlobClient(blobPath);
+            Classify(message.To);
+            Classify(message.Cc);
+            Classify(message.Bcc);
 
-            using var stream = new MemoryStream();
-            await message.WriteToAsync(stream);
-            stream.Position = 0;
-            await blobClient.UploadAsync(stream, overwrite: true, cancellationToken);
-
-            // Set metadata (include Subject/From so the list view can show them without downloading)
-            var metadata = new Dictionary<string, string>
+            // Handle Remote Recipients (Relay)
+            if (remoteRecipients.Any())
             {
-                ["SessionId"] = sessionId?.ToString() ?? "unknown",
-                ["TransactionId"] = transactionId,
-                ["ReceivedAt"] = DateTime.UtcNow.ToString("O"),
-                ["MessageSize"] = buffer.Length.ToString(),
-                ["ContainerName"] = _containerName,
-                ["RecipientUser"] = recipientUser,
-                ["Subject"] = originalSubject,
-                ["From"] = originalFrom,
-                ["IsSpam"] = isSpam.ToString()
-            };
-
-            await blobClient.SetMetadataAsync(metadata, cancellationToken: cancellationToken);
-
-            _logger.LogInformation("Message saved successfully to blob {BlobName} in container {ContainerName}, size {MessageSize} bytes",
-                blobPath, _containerName, buffer.Length);
-
-            if (isSpam)
-            {
-                // Extract IP address from context
-                string ipAddress = "unknown";
-                if (context.Properties.ContainsKey("SpamIP"))
+                // Check Authentication
+                if (!context.Authentication.IsAuthenticated)
                 {
-                    ipAddress = context.Properties["SpamIP"]?.ToString() ?? "unknown";
-                }
-                else if (context.Properties.TryGetValue("RemoteEndPoint", out var endpointObj) && endpointObj is System.Net.IPEndPoint ipEndPoint)
-                {
-                    ipAddress = ipEndPoint.Address.ToString();
+                    _logger.LogWarning("Relay attempt denied: User not authenticated. Session: {SessionId}", sessionId);
+                    return SmtpResponse.AuthenticationRequired;
                 }
 
-                await LogSpamAsync(sessionId?.ToString() ?? "unknown", transactionId, originalFrom, recipientUser, originalSubject, blobPath, ipAddress);
+                _logger.LogInformation("Relaying message to {Count} remote recipients.", remoteRecipients.Count);
+                await RelayMessageAsync(message, remoteRecipients, cancellationToken);
+            }
+
+            // Handle Local Recipients (Save to Blob)
+            if (localRecipients.Any())
+            {
+                // Only proceed if storage is available
+                if (!_isAvailable || _containerClient == null)
+                {
+                    _logger.LogWarning("Blob storage unavailable. Message content will be logged only.");
+                    var logMessageContent = Encoding.UTF8.GetString(buffer.ToArray());
+                    _logger.LogInformation("Message Content (Session {SessionId}):\n{MessageContent}", sessionId, logMessageContent);
+                    return SmtpResponse.Ok;
+                }
+
+                await SaveToBlobAsync(context, transaction, buffer, message, sessionId, transactionId, cancellationToken);
             }
 
             return SmtpResponse.Ok;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to save message to blob storage. Error: {ErrorMessage}", ex.Message);
+            _logger.LogError(ex, "Error processing message.");
+            return SmtpResponse.TransactionFailed;
+        }
+    }
 
-            // Log the message content as fallback
+    private async Task RelayMessageAsync(MimeMessage message, List<MailboxAddress> recipients, CancellationToken ct)
+    {
+        // Sign DKIM if enabled
+        if (_configuration.EnableDkimSigning && 
+            !string.IsNullOrEmpty(_configuration.DkimDomain) && 
+            !string.IsNullOrEmpty(_configuration.DkimSelector) && 
+            !string.IsNullOrEmpty(_configuration.DkimPrivateKey))
+        {
+            _logger.LogInformation("Signing outgoing message with DKIM for domain {Domain}", _configuration.DkimDomain);
+            SignMessage(message, _configuration.DkimDomain, _configuration.DkimSelector, _configuration.DkimPrivateKey);
+        }
+
+        var groups = recipients.GroupBy(r => r.Domain);
+        foreach (var group in groups)
+        {
+            var domain = group.Key;
             try
             {
-                var messageContent = Encoding.UTF8.GetString(buffer.ToArray());
-                _logger.LogInformation("Message content (fallback logging):\n{MessageContent}", messageContent);
-            }
-            catch (Exception logEx)
-            {
-                _logger.LogError(logEx, "Failed to log message content as fallback");
-            }
+                _logger.LogInformation("Looking up MX records for {Domain}", domain);
+                var mxRecords = await _lookupClient.QueryAsync(domain, QueryType.MX);
+                var mxServer = mxRecords.Answers.MxRecords()
+                    .OrderBy(mx => mx.Preference)
+                    .Select(mx => mx.Exchange.Value)
+                    .FirstOrDefault();
 
-            return SmtpResponse.Ok; // Return OK to not break SMTP flow, even if storage fails
+                if (string.IsNullOrEmpty(mxServer))
+                {
+                    mxServer = domain; // Fallback to A record
+                }
+
+                if (mxServer.EndsWith(".")) mxServer = mxServer.Substring(0, mxServer.Length - 1);
+
+                _logger.LogInformation("Relaying to {Domain} via {MxServer}", domain, mxServer);
+
+                using var client = new MailKit.Net.Smtp.SmtpClient();
+                // Connect (Port 25 is standard for MTA-to-MTA)
+                await client.ConnectAsync(mxServer, 25, MailKit.Security.SecureSocketOptions.Auto, ct);
+
+                var sender = message.From.OfType<MailboxAddress>().FirstOrDefault() ?? new MailboxAddress("Sender", _configuration.AllowedRecipient);
+                
+                await client.SendAsync(message, sender, group, ct);
+                await client.DisconnectAsync(true, ct);
+
+                _logger.LogInformation("Successfully relayed message to {Domain}", domain);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to relay message to {Domain}", domain);
+            }
+        }
+    }
+
+    private async Task SaveToBlobAsync(ISessionContext context, IMessageTransaction transaction, ReadOnlySequence<byte> buffer, MimeMessage message, string sessionId, string transactionId, CancellationToken cancellationToken)
+    {
+        // Check for spam tag
+        bool isSpam = context.Properties.ContainsKey("IsSpam") && (bool)context.Properties["IsSpam"];
+        
+        // Get the correct container client
+        var containerClient = isSpam ? _blobServiceClient!.GetBlobContainerClient(_containerName) : _containerClient!;
+        await containerClient.CreateIfNotExistsAsync(cancellationToken: cancellationToken);
+
+        // Determine recipient user folder (first recipient)
+        string recipientUser = "unknown";
+        try
+        {
+            var firstTo = transaction.To?.OfType<SmtpServer.Mail.IMailbox>().FirstOrDefault();
+            recipientUser = firstTo?.User ?? "unknown";
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Unable to extract recipient user from transaction; defaulting to 'unknown'.");
+        }
+
+        string recipientFolder = SanitizeForBlobPath(recipientUser);
+        if (isSpam) recipientFolder = "spam";
+
+        var timestamp = DateTime.UtcNow.ToString("yyyy-MM-dd_HH-mm-ss-fff");
+        var blobName = $"{timestamp}_{sessionId}_{Guid.NewGuid():N}.eml";
+        var blobPath = $"{recipientFolder}/{blobName}";
+
+        // Original content for metadata extraction
+        var messageContent = Encoding.UTF8.GetString(buffer.ToArray());
+        var originalSubject = message.Subject ?? "(no subject)";
+        var originalFrom = message.From.ToString();
+
+        // DKIM/DMARC Validation (Incoming)
+        bool dkimPass = false;
+        bool dmarcPass = false;
+        
+        // Re-implementing the manual extraction from original code for consistency
+        static string? HeaderFromOriginal(string content, string key)
+        {
+            using var sr = new StringReader(content);
+            string? l;
+            var prefix = key + ":";
+            while ((l = sr.ReadLine()) != null)
+            {
+                if (string.IsNullOrWhiteSpace(l)) break;
+                if (l.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    return l.Substring(prefix.Length).Trim();
+                }
+            }
+            return null;
+        }
+        string? dkimSignature = HeaderFromOriginal(messageContent, "DKIM-Signature");
+        
+        if (_configuration.EnableDkimCheck && !string.IsNullOrEmpty(dkimSignature))
+        {
+            dkimPass = await _authService.ValidateDkimAsync(dkimSignature);
+        }
+
+        if (_configuration.EnableDmarcCheck)
+        {
+            bool spfPass = context.Properties.ContainsKey("SpfPass") && (bool)context.Properties["SpfPass"];
+            if (spfPass || dkimPass) dmarcPass = true;
+        }
+
+        // Add metadata headers to the message object
+        message.Headers.Add("X-SMTP-Server-Received", DateTime.UtcNow.ToString("R"));
+        message.Headers.Add("X-SMTP-Server-Session", sessionId);
+        message.Headers.Add("X-SMTP-Server-Transaction", transactionId);
+        message.Headers.Add("X-SMTP-Server-BlobName", blobPath);
+        message.Headers.Add("X-SMTP-Server-Recipient-User", recipientUser);
+        if (isSpam) message.Headers.Add("X-SMTP-Server-Spam", "True");
+        if (dkimPass) message.Headers.Add("X-SMTP-Server-DKIM", "Pass");
+        if (dmarcPass) message.Headers.Add("X-SMTP-Server-DMARC", "Pass");
+
+        // DKIM Signing (for local storage - maybe we want to sign it too?)
+        // Use configuration first, then table
+        bool signed = false;
+        if (_configuration.EnableDkimSigning && !string.IsNullOrEmpty(_configuration.DkimPrivateKey))
+        {
+             SignMessage(message, _configuration.DkimDomain, _configuration.DkimSelector, _configuration.DkimPrivateKey);
+             signed = true;
+        }
+        
+        if (!signed && _settingsTableClient != null)
+        {
+             // Fallback to table settings
+             try {
+                var settings = await _settingsTableClient.GetEntityIfExistsAsync<TableEntity>("SmtpServer", "Current");
+                if (settings.HasValue && settings.Value != null)
+                {
+                    var enable = settings.Value.GetBoolean("EnableDkimSigning") ?? false;
+                    var key = settings.Value.GetString("DkimPrivateKey");
+                    var sel = settings.Value.GetString("DkimSelector");
+                    var dom = settings.Value.GetString("DkimDomain");
+                    if (enable && !string.IsNullOrEmpty(key))
+                    {
+                        SignMessage(message, dom, sel, key);
+                    }
+                }
+             } catch {}
+        }
+
+        // Upload
+        var blobClient = containerClient.GetBlobClient(blobPath);
+        using var stream = new MemoryStream();
+        await message.WriteToAsync(stream);
+        stream.Position = 0;
+        await blobClient.UploadAsync(stream, overwrite: true, cancellationToken);
+
+        // Metadata
+        var metadata = new Dictionary<string, string>
+        {
+            ["SessionId"] = sessionId,
+            ["TransactionId"] = transactionId,
+            ["ReceivedAt"] = DateTime.UtcNow.ToString("O"),
+            ["MessageSize"] = buffer.Length.ToString(),
+            ["ContainerName"] = _containerName,
+            ["RecipientUser"] = recipientUser,
+            ["Subject"] = originalSubject,
+            ["From"] = originalFrom,
+            ["IsSpam"] = isSpam.ToString()
+        };
+        await blobClient.SetMetadataAsync(metadata, cancellationToken: cancellationToken);
+
+        _logger.LogInformation("Message saved to blob {BlobPath}", blobPath);
+        
+        if (isSpam)
+        {
+             // Log spam
+             string ipAddress = "unknown";
+             if (context.Properties.TryGetValue("RemoteEndPoint", out var endpointObj) && endpointObj is System.Net.IPEndPoint ipEndPoint)
+             {
+                 ipAddress = ipEndPoint.Address.ToString();
+             }
+             await LogSpamAsync(sessionId, transactionId, originalFrom, recipientUser, originalSubject, blobPath, ipAddress);
         }
     }
 
     private async Task LogSpamAsync(string sessionId, string transactionId, string from, string to, string subject, string blobPath, string ip)
     {
         if (_spamLogTableClient == null) return;
-
         try
         {
             var entity = new TableEntity
@@ -323,12 +370,11 @@ public class DefaultMessageStore : MessageStore
                 ["BlobPath"] = blobPath,
                 ["IP"] = ip
             };
-
             await _spamLogTableClient.AddEntityAsync(entity);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to log spam entry to table storage");
+            _logger.LogError(ex, "Failed to log spam entry");
         }
     }
 
@@ -371,22 +417,12 @@ public class DefaultMessageStore : MessageStore
 
     private static string SanitizeForBlobPath(string value)
     {
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            return "unknown";
-        }
-
+        if (string.IsNullOrWhiteSpace(value)) return "unknown";
         var builder = new StringBuilder(value.Length);
         foreach (var ch in value)
         {
-            if (char.IsLetterOrDigit(ch) || ch == '.' || ch == '-' || ch == '_')
-            {
-                builder.Append(ch);
-            }
-            else
-            {
-                builder.Append('_');
-            }
+            if (char.IsLetterOrDigit(ch) || ch == '.' || ch == '-' || ch == '_') builder.Append(ch);
+            else builder.Append('_');
         }
         var result = builder.ToString().Trim();
         return string.IsNullOrEmpty(result) ? "unknown" : result;

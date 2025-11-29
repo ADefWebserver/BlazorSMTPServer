@@ -1,6 +1,6 @@
 # SMTPServerSvc Program Flow
 
-This diagram illustrates the flow of an SMTP session within the `SMTPServerSvc` project, from connection to message storage.
+This diagram illustrates the flow of an SMTP session within the `SMTPServerSvc` project, from connection to message storage or relay.
 
 ```mermaid
 sequenceDiagram
@@ -9,9 +9,11 @@ sequenceDiagram
     participant Auth as DefaultUserAuthenticator
     participant Filter as DefaultMailboxFilter
     participant Store as DefaultMessageStore
-    participant DNS as DnsResolver
+    participant AuthSvc as MailAuthenticationService
+    participant DNS as DNS (DnsResolver/LookupClient)
     participant Blob as Azure Blob Storage
     participant Table as Azure Table Storage
+    participant RemoteMTA as Remote MTA (Relay)
 
     Note over Client, Server: Connection Established
 
@@ -31,6 +33,8 @@ sequenceDiagram
     alt Is Authenticated
         Filter-->>Server: Accept
     else Is Unauthenticated
+        Filter->>Filter: Check for Spam Test Address
+        
         Filter->>DNS: Check Spamhaus (DNSBL)
         DNS-->>Filter: Result
         
@@ -39,14 +43,17 @@ sequenceDiagram
             Filter->>Filter: Set IsSpam = true
         end
 
-        Filter->>DNS: Check SPF
-        DNS-->>Filter: Result
+        Filter->>AuthSvc: ValidateSpfAsync(ip, domain)
+        AuthSvc->>DNS: Query TXT (SPF)
+        DNS-->>AuthSvc: Result
+        AuthSvc-->>Filter: Result (Pass/Fail)
         
         alt SPF Fail
             Filter->>Table: Log Spam Detection
             Filter->>Filter: Set IsSpam = true
         end
         
+        Filter->>Filter: Store SpfPass & FromDomain in Context
         Filter-->>Server: Accept (even if spam, tagged)
     end
 
@@ -54,7 +61,7 @@ sequenceDiagram
     Client->>Server: RCPT TO: <recipient@domain.com>
     Server->>Filter: CanDeliverToAsync(context, recipient)
     
-    alt Recipient Allowed
+    alt Recipient Allowed (Local or Relay if Auth)
         Filter-->>Server: Accept
     else Recipient Not Allowed
         Filter-->>Server: Reject
@@ -66,31 +73,52 @@ sequenceDiagram
     Client->>Server: .
     Server->>Store: SaveAsync(context, transaction, buffer)
 
-    Note over Store: Processing Message
-
-    Store->>Store: Check IsSpam flag
-    Store->>Store: Validate DKIM (if enabled)
-    Store->>Store: Validate DMARC (SPF + DKIM)
-    
-    alt DMARC Fail (Reject/Quarantine)
-        Store->>Store: Set IsSpam = true
-    end
-
     Store->>Store: Parse MimeMessage
-    Store->>Store: Add X-SMTP-Server-* Headers
-    
-    opt DKIM Signing Enabled
-        Store->>Store: Sign Message with DKIM
+    Store->>Store: Classify Recipients (Local vs Remote)
+
+    alt Remote Recipients (Relay)
+        alt Is Authenticated
+            Store->>Store: RelayMessageAsync
+            opt DKIM Signing Enabled
+                Store->>Store: Sign Message
+            end
+            Store->>DNS: Lookup MX Records
+            Store->>RemoteMTA: Connect & Send (Relay)
+        else Not Authenticated
+            Store-->>Server: Reject (Auth Required)
+        end
     end
 
-    alt Is Spam
-        Store->>Blob: Upload to "spam" folder
-        Store->>Table: Log to "spamlogs"
-    else Not Spam
-        Store->>Blob: Upload to "recipient" folder
+    alt Local Recipients (Save)
+        Store->>Store: SaveToBlobAsync
+        Store->>Store: Check IsSpam flag (from Context)
+        
+        opt DKIM Check Enabled
+            Store->>AuthSvc: ValidateDkimAsync(header)
+            AuthSvc->>DNS: Query TXT (DKIM Key)
+            AuthSvc-->>Store: Result
+        end
+
+        opt DMARC Check Enabled
+            Store->>Store: Validate DMARC (SPF Result + DKIM Result)
+        end
+
+        Store->>Store: Add X-SMTP-Server-* Headers
+        
+        opt DKIM Signing Enabled (Local)
+            Store->>Store: Sign Message
+        end
+
+        alt Is Spam
+            Store->>Blob: Upload to "spam" folder
+            Store->>Table: Log to "spamlogs"
+        else Not Spam
+            Store->>Blob: Upload to "recipient" folder
+        end
+        
+        Store->>Blob: Set Blob Metadata
     end
-    
-    Store->>Blob: Set Blob Metadata
+
     Store-->>Server: SmtpResponse.Ok
     Server-->>Client: 250 OK
 ```

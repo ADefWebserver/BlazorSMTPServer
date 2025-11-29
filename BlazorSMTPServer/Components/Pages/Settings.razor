@@ -119,11 +119,6 @@
                                                         }
                                                         Save
                                                     </button>
-                                                    <button type="button" class="btn btn-outline-secondary"
-                                                            @onclick="ResetAsync"
-                                                            disabled="@(Saving || IsLoading)">
-                                                        Reset
-                                                    </button>
                                                 </div>
                                             </div>
                                         </div>
@@ -455,11 +450,6 @@
         }
         catch (Exception ex) { Error = ex.Message; Log.LogError(ex, "Load failed"); }
         finally { IsLoading = false; }
-    }
-
-    async Task ResetAsync()
-    {
-        await LoadAsync();
     }
 
     async Task SaveAsync()

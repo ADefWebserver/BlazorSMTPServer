@@ -243,6 +243,7 @@ public class DefaultMessageStore : MessageStore
                 _logger.LogInformation("Relaying to {Domain} via {MxServer}", domain, mxServer);
 
                 using var client = new MailKit.Net.Smtp.SmtpClient();
+
                 // Connect (Port 25 is standard for MTA-to-MTA)
                 await client.ConnectAsync(mxServer, 25, MailKit.Security.SecureSocketOptions.Auto, ct);
 
@@ -255,7 +256,7 @@ public class DefaultMessageStore : MessageStore
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to relay message to {Domain}", domain);
+                _logger.LogError(ex, "Failed to relay message to {Domain} - {ex}", domain, ex.Message);
             }
         }
     } 

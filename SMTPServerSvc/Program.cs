@@ -33,6 +33,9 @@ internal class Program
             .Get<SmtpServerConfiguration>()
             ?? new SmtpServerConfiguration();
 
+        // Ensure Domain mirrors ServerName
+        smtpConfig.Domain = smtpConfig.ServerName ?? string.Empty;
+
         // Minimal validation
         if (smtpConfig.Ports is null || smtpConfig.Ports.Length == 0 || string.IsNullOrWhiteSpace(smtpConfig.ServerName))
         {

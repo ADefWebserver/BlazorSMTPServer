@@ -23,10 +23,20 @@ public class DefaultUserAuthenticator : IUserAuthenticator
         _logger.LogInformation("DefaultUserAuthenticator initialized. Only allowing user: {AllowedUsername}", _allowedUsername);
     }
 
+    /// <summary>
+    /// Asynchronously authenticates a user using the provided session context, username, and password.
+    /// </summary>
+    /// <param name="context">The session context associated with the authentication attempt. Must not be null.</param>
+    /// <param name="user">The username to authenticate. Cannot be null or empty.</param>
+    /// <param name="password">The password corresponding to the specified username. Cannot be null.</param>
+    /// <param name="cancellationToken">A cancellation token that can be used to cancel the authentication operation.</param>
+    /// <returns>A task that represents the asynchronous operation. The task result is <see langword="true"/> if authentication
+    /// is successful; otherwise, <see langword="false"/>.</returns>
+    #region public Task<bool> AuthenticateAsync(ISessionContext context, string user, string password, CancellationToken cancellationToken)
     public Task<bool> AuthenticateAsync(ISessionContext context, string user, string password, CancellationToken cancellationToken)
     {
-        _logger.LogInformation("Authentication attempt for user: {Username} from {RemoteEndPoint}", 
-            user, 
+        _logger.LogInformation("Authentication attempt for user: {Username} from {RemoteEndPoint}",
+            user,
             context.Properties.ContainsKey("RemoteEndPoint") ? context.Properties["RemoteEndPoint"] : "unknown");
 
         // Check credentials (in production, use secure password hashing!)
@@ -43,5 +53,6 @@ public class DefaultUserAuthenticator : IUserAuthenticator
         }
 
         return Task.FromResult(isAuthenticated);
-    }
+    } 
+    #endregion
 }

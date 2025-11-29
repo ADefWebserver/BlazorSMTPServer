@@ -168,6 +168,14 @@ public class DefaultMailboxFilter : IMailboxFilter
             return Task.FromResult(true);
         }
 
+        // Allow abuse and postmaster
+        if (string.Equals(to.User, "abuse", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(to.User, "postmaster", StringComparison.OrdinalIgnoreCase))
+        {
+            _logger.LogInformation("Delivery allowed to role account: {ToAddress}", toAddress);
+            return Task.FromResult(true);
+        }
+
         // 2. Allow if recipient is local (Incoming)
         // Check if the recipient is one of the allowed addresses (case-insensitive)
         var canDeliver = _allowedRecipients.Contains(toAddress);

@@ -100,6 +100,7 @@ public class DefaultMessageStore : MessageStore
     {
         try
         {
+            // Log basic info
             var sessionId = context.Properties.ContainsKey("SessionId") ? context.Properties["SessionId"]?.ToString() ?? "unknown" : "unknown";
             var transactionId = transaction.GetHashCode().ToString();
 
@@ -118,19 +119,32 @@ public class DefaultMessageStore : MessageStore
             {
                 foreach (var addr in addresses.OfType<MailboxAddress>())
                 {
+                    // Determine if local or remote
                     bool isLocal = false;
+
+                    // Check against configured domain or allowed recipient
                     if (!string.IsNullOrEmpty(_configuration.Domain))
                     {
+                        // Compare domain
                         isLocal = string.Equals(addr.Domain, _configuration.Domain, StringComparison.OrdinalIgnoreCase);
-                    }
+                    } 
                     else if (!string.IsNullOrEmpty(_configuration.AllowedRecipient))
                     {
+                        // Compare against allowed recipient's domain
                         var allowedDomain = _configuration.AllowedRecipient.Split('@').LastOrDefault();
                         isLocal = string.Equals(addr.Domain, allowedDomain, StringComparison.OrdinalIgnoreCase);
                     }
 
-                    if (isLocal) localRecipients.Add(addr);
-                    else remoteRecipients.Add(addr);
+                    if (isLocal)
+                    {
+                        // Local recipient
+                        localRecipients.Add(addr);
+                    }
+                    else
+                    {
+                        // Remote recipient
+                        remoteRecipients.Add(addr);
+                    }
                 }
             }
 
@@ -149,6 +163,8 @@ public class DefaultMessageStore : MessageStore
                 }
 
                 _logger.LogInformation("Relaying message to {Count} remote recipients.", remoteRecipients.Count);
+
+                // Relay
                 await RelayMessageAsync(message, remoteRecipients, cancellationToken);
             }
 
@@ -164,6 +180,7 @@ public class DefaultMessageStore : MessageStore
                     return SmtpResponse.Ok;
                 }
 
+                // Save to Blob
                 await SaveToBlobAsync(context, transaction, buffer, message, sessionId, transactionId, cancellationToken);
             }
 

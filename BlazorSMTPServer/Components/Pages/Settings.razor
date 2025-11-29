@@ -207,7 +207,7 @@
                                     </div>
                                     <div class="col-12 col-md-6">
                                         <label class="form-label">DKIM Selector</label>
-                                        <input class="form-control" @bind="DkimSelector" placeholder="e.g. default" />
+                                        <input class="form-control" @bind="DkimSelector" placeholder="e.g. blazorsmtp" />
                                     </div>
                                     <div class="col-12 col-md-6">
                                         <label class="form-label">DKIM Domain</label>
@@ -441,7 +441,7 @@
 
                 DkimPrivateKey = settings.Value?.GetString("DkimPrivateKey");
                 DkimSelector = settings.Value?.GetString("DkimSelector");
-                if (string.IsNullOrEmpty(DkimSelector)) DkimSelector = "default";
+                if (string.IsNullOrEmpty(DkimSelector)) DkimSelector = "blazorsmtp";
                 DkimDomain = settings.Value?.GetString("DkimDomain");
                 if (string.IsNullOrEmpty(DkimDomain)) DkimDomain = ServerName;
                 EnableDkimSigning = settings.Value?.GetBoolean("EnableDkimSigning") ?? false;
@@ -749,7 +749,7 @@
             // Set default selector/domain if empty
             if (string.IsNullOrEmpty(DkimSelector))
             {
-                DkimSelector = "default";
+                DkimSelector = "blazorsmtp";
             }
             if (string.IsNullOrEmpty(DkimDomain) && !string.IsNullOrEmpty(ServerName))
             {

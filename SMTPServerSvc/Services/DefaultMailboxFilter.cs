@@ -61,8 +61,8 @@ public class DefaultMailboxFilter : IMailboxFilter
     {
         var fromAddress = @from.AsAddress();
 
-        // Check if the user is authenticated (set by DefaultUserAuthenticator)
-        bool isAuthenticated = context.Properties.ContainsKey("IsAuthenticated") && (bool)context.Properties["IsAuthenticated"];
+        // Check if the user is authenticated
+        bool isAuthenticated = context.Authentication.IsAuthenticated;
 
         if (isAuthenticated)
         {
@@ -161,6 +161,14 @@ public class DefaultMailboxFilter : IMailboxFilter
 
         _logger.LogInformation("Checking delivery to: {ToAddress} from: {FromAddress}", toAddress, fromAddress);
 
+        // 1. Allow if authenticated (Relay)
+        if (context.Authentication.IsAuthenticated)
+        {
+            _logger.LogInformation("Delivery allowed (Relay) for authenticated user: {FromAddress} to {ToAddress}", fromAddress, toAddress);
+            return Task.FromResult(true);
+        }
+
+        // 2. Allow if recipient is local (Incoming)
         // Check if the recipient is one of the allowed addresses (case-insensitive)
         var canDeliver = _allowedRecipients.Contains(toAddress);
 

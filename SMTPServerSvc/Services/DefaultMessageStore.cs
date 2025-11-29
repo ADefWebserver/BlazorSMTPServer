@@ -80,6 +80,22 @@ public class DefaultMessageStore : MessageStore
         }
     }
 
+    /// <summary>
+    /// Processes and saves an email message received during the SMTP session, relaying to remote recipients if
+    /// necessary and storing locally addressed messages.
+    /// </summary>
+    /// <remarks>Messages addressed to local recipients are saved to storage if available; otherwise, their
+    /// content is logged. Messages for remote recipients are relayed only if the session is authenticated. The method
+    /// handles both local delivery and relaying within a single operation.</remarks>
+    /// <param name="context">The session context for the current SMTP transaction. Provides authentication and session properties required
+    /// for message processing.</param>
+    /// <param name="transaction">The message transaction details, including sender and recipient information for the current SMTP message.</param>
+    /// <param name="buffer">A read-only sequence of bytes containing the raw message data to be processed and saved.</param>
+    /// <param name="cancellationToken">A cancellation token that can be used to cancel the asynchronous operation.</param>
+    /// <returns>An <see cref="SmtpResponse"/> indicating the result of the save operation. Returns <see cref="SmtpResponse.Ok"/>
+    /// if the message is successfully processed, <see cref="SmtpResponse.AuthenticationRequired"/> if authentication is
+    /// required for relaying, or <see cref="SmtpResponse.TransactionFailed"/> if an error occurs.</returns>
+    #region public override async Task<SmtpResponse> SaveAsync(ISessionContext context, IMessageTransaction transaction, ReadOnlySequence<byte> buffer, CancellationToken cancellationToken)
     public override async Task<SmtpResponse> SaveAsync(ISessionContext context, IMessageTransaction transaction, ReadOnlySequence<byte> buffer, CancellationToken cancellationToken)
     {
         try
@@ -159,13 +175,28 @@ public class DefaultMessageStore : MessageStore
             return SmtpResponse.TransactionFailed;
         }
     }
+    #endregion
 
+    /// <summary>
+    /// Relays the specified email message to the given recipients by delivering it to their respective mail servers
+    /// using SMTP.
+    /// </summary>
+    /// <remarks>The message is relayed directly to the recipients' mail servers, grouped by domain. If DKIM
+    /// signing is enabled in the configuration, the message will be signed before delivery. If an MX record cannot be
+    /// found for a recipient's domain, the method attempts to deliver to the domain's A record as a fallback. Errors
+    /// encountered while relaying to individual domains are logged but do not stop the relay process for other
+    /// domains.</remarks>
+    /// <param name="message">The email message to be relayed. Must not be null.</param>
+    /// <param name="recipients">A list of recipient mailbox addresses to which the message will be delivered. Must not be null or empty.</param>
+    /// <param name="ct">A cancellation token that can be used to cancel the relay operation.</param>
+    /// <returns>A task that represents the asynchronous relay operation.</returns>
+    #region private async Task RelayMessageAsync(MimeMessage message, List<MailboxAddress> recipients, CancellationToken ct)
     private async Task RelayMessageAsync(MimeMessage message, List<MailboxAddress> recipients, CancellationToken ct)
     {
         // Sign DKIM if enabled
-        if (_configuration.EnableDkimSigning && 
-            !string.IsNullOrEmpty(_configuration.DkimDomain) && 
-            !string.IsNullOrEmpty(_configuration.DkimSelector) && 
+        if (_configuration.EnableDkimSigning &&
+            !string.IsNullOrEmpty(_configuration.DkimDomain) &&
+            !string.IsNullOrEmpty(_configuration.DkimSelector) &&
             !string.IsNullOrEmpty(_configuration.DkimPrivateKey))
         {
             _logger.LogInformation("Signing outgoing message with DKIM for domain {Domain}", _configuration.DkimDomain);
@@ -199,7 +230,7 @@ public class DefaultMessageStore : MessageStore
                 await client.ConnectAsync(mxServer, 25, MailKit.Security.SecureSocketOptions.Auto, ct);
 
                 var sender = message.From.OfType<MailboxAddress>().FirstOrDefault() ?? new MailboxAddress("Sender", _configuration.AllowedRecipient);
-                
+
                 await client.SendAsync(message, sender, group, ct);
                 await client.DisconnectAsync(true, ct);
 
@@ -210,13 +241,36 @@ public class DefaultMessageStore : MessageStore
                 _logger.LogError(ex, "Failed to relay message to {Domain}", domain);
             }
         }
-    }
+    } 
+    #endregion
 
+    /// <summary>
+    /// Saves the specified email message and its metadata to a blob storage container, organizing it by recipient and
+    /// session information.
+    /// </summary>
+    /// <remarks>If the message is identified as spam, it is stored in a designated spam container or folder.
+    /// Additional metadata, such as DKIM and DMARC validation results, session and transaction identifiers, and
+    /// recipient information, are added as headers and blob metadata. The method also performs DKIM signing if enabled
+    /// in the configuration or settings. This method logs relevant information and may trigger additional logging for
+    /// spam messages.</remarks>
+    /// <param name="context">The session context containing properties and state information relevant to the current SMTP session. Must not
+    /// be null.</param>
+    /// <param name="transaction">The message transaction representing the current SMTP transaction, including recipient and sender details. Must
+    /// not be null.</param>
+    /// <param name="buffer">A read-only sequence of bytes containing the raw message data to be saved.</param>
+    /// <param name="message">The parsed MIME message to be stored in blob storage. Must not be null.</param>
+    /// <param name="sessionId">The unique identifier for the current SMTP session. Used for organizing and tracking stored messages. Must not
+    /// be null or empty.</param>
+    /// <param name="transactionId">The unique identifier for the current message transaction. Used for metadata and tracking. Must not be null or
+    /// empty.</param>
+    /// <param name="cancellationToken">A cancellation token that can be used to cancel the asynchronous save operation.</param>
+    /// <returns>A task that represents the asynchronous save operation.</returns>
+    #region private async Task SaveToBlobAsync(ISessionContext context, IMessageTransaction transaction, ReadOnlySequence<byte> buffer, MimeMessage message, string sessionId, string transactionId, CancellationToken cancellationToken)
     private async Task SaveToBlobAsync(ISessionContext context, IMessageTransaction transaction, ReadOnlySequence<byte> buffer, MimeMessage message, string sessionId, string transactionId, CancellationToken cancellationToken)
     {
         // Check for spam tag
         bool isSpam = context.Properties.ContainsKey("IsSpam") && (bool)context.Properties["IsSpam"];
-        
+
         // Get the correct container client
         var containerClient = isSpam ? _blobServiceClient!.GetBlobContainerClient(_containerName) : _containerClient!;
         await containerClient.CreateIfNotExistsAsync(cancellationToken: cancellationToken);
@@ -248,7 +302,7 @@ public class DefaultMessageStore : MessageStore
         // DKIM/DMARC Validation (Incoming)
         bool dkimPass = false;
         bool dmarcPass = false;
-        
+
         // Re-implementing the manual extraction from original code for consistency
         static string? HeaderFromOriginal(string content, string key)
         {
@@ -266,7 +320,7 @@ public class DefaultMessageStore : MessageStore
             return null;
         }
         string? dkimSignature = HeaderFromOriginal(messageContent, "DKIM-Signature");
-        
+
         if (_configuration.EnableDkimCheck && !string.IsNullOrEmpty(dkimSignature))
         {
             dkimPass = await _authService.ValidateDkimAsync(dkimSignature);
@@ -293,14 +347,15 @@ public class DefaultMessageStore : MessageStore
         bool signed = false;
         if (_configuration.EnableDkimSigning && !string.IsNullOrEmpty(_configuration.DkimPrivateKey))
         {
-             SignMessage(message, _configuration.DkimDomain, _configuration.DkimSelector, _configuration.DkimPrivateKey);
-             signed = true;
+            SignMessage(message, _configuration.DkimDomain, _configuration.DkimSelector, _configuration.DkimPrivateKey);
+            signed = true;
         }
-        
+
         if (!signed && _settingsTableClient != null)
         {
-             // Fallback to table settings
-             try {
+            // Fallback to table settings
+            try
+            {
                 var settings = await _settingsTableClient.GetEntityIfExistsAsync<TableEntity>("SmtpServer", "Current");
                 if (settings.HasValue && settings.Value != null)
                 {
@@ -313,7 +368,8 @@ public class DefaultMessageStore : MessageStore
                         SignMessage(message, dom, sel, key);
                     }
                 }
-             } catch {}
+            }
+            catch { }
         }
 
         // Upload
@@ -339,19 +395,34 @@ public class DefaultMessageStore : MessageStore
         await blobClient.SetMetadataAsync(metadata, cancellationToken: cancellationToken);
 
         _logger.LogInformation("Message saved to blob {BlobPath}", blobPath);
-        
+
         if (isSpam)
         {
-             // Log spam
-             string ipAddress = "unknown";
-             if (context.Properties.TryGetValue("RemoteEndPoint", out var endpointObj) && endpointObj is System.Net.IPEndPoint ipEndPoint)
-             {
-                 ipAddress = ipEndPoint.Address.ToString();
-             }
-             await LogSpamAsync(sessionId, transactionId, originalFrom, recipientUser, originalSubject, blobPath, ipAddress);
+            // Log spam
+            string ipAddress = "unknown";
+            if (context.Properties.TryGetValue("RemoteEndPoint", out var endpointObj) && endpointObj is System.Net.IPEndPoint ipEndPoint)
+            {
+                ipAddress = ipEndPoint.Address.ToString();
+            }
+            await LogSpamAsync(sessionId, transactionId, originalFrom, recipientUser, originalSubject, blobPath, ipAddress);
         }
-    }
+    } 
+    #endregion
 
+    /// <summary>
+    /// Asynchronously logs details of a detected spam message to the spam log storage.
+    /// </summary>
+    /// <remarks>If the spam log storage client is not configured, the method completes without logging.
+    /// Errors encountered during logging are handled internally and do not propagate to the caller.</remarks>
+    /// <param name="sessionId">The unique identifier for the current session in which the spam was detected.</param>
+    /// <param name="transactionId">The unique identifier for the transaction associated with the spam message.</param>
+    /// <param name="from">The email address of the sender of the spam message.</param>
+    /// <param name="to">The email address of the intended recipient of the spam message.</param>
+    /// <param name="subject">The subject line of the spam message.</param>
+    /// <param name="blobPath">The storage path to the blob containing the spam message content.</param>
+    /// <param name="ip">The IP address from which the spam message originated.</param>
+    /// <returns>A task that represents the asynchronous logging operation.</returns>
+    #region private async Task LogSpamAsync(string sessionId, string transactionId, string from, string to, string subject, string blobPath, string ip)
     private async Task LogSpamAsync(string sessionId, string transactionId, string from, string to, string subject, string blobPath, string ip)
     {
         if (_spamLogTableClient == null) return;
@@ -376,8 +447,23 @@ public class DefaultMessageStore : MessageStore
         {
             _logger.LogError(ex, "Failed to log spam entry");
         }
-    }
+    } 
+    #endregion
 
+    /// <summary>
+    /// Signs the specified MIME message using DomainKeys Identified Mail (DKIM) with the provided domain, selector, and
+    /// private key.
+    /// </summary>
+    /// <remarks>If the private key is invalid or signing fails, the message will not be signed and a warning
+    /// will be logged. This method modifies the message in place by adding a DKIM-Signature header. Only the From,
+    /// Subject, Date, and To headers are included in the signature. This method is not thread-safe if called
+    /// concurrently on the same message instance.</remarks>
+    /// <param name="message">The MIME message to sign. The message will be modified to include a DKIM-Signature header if signing succeeds.</param>
+    /// <param name="domain">The domain name to use in the DKIM signature. This should match the domain of the sender.</param>
+    /// <param name="selector">The DKIM selector that identifies the public key in DNS. Used to locate the DKIM public key record for
+    /// verification.</param>
+    /// <param name="privateKeyPem">The private key in PEM format used to generate the DKIM signature. Must be a valid RSA private key.</param>
+    #region private void SignMessage(MimeMessage message, string domain, string selector, string privateKeyPem)
     private void SignMessage(MimeMessage message, string domain, string selector, string privateKeyPem)
     {
         try
@@ -413,8 +499,19 @@ public class DefaultMessageStore : MessageStore
         {
             _logger.LogError(ex, "Failed to sign message with DKIM");
         }
-    }
+    } 
+    #endregion
 
+    /// <summary>
+    /// Returns a sanitized version of the specified string that is safe for use as a blob storage path segment.
+    /// </summary>
+    /// <remarks>This method is useful for generating blob path segments that comply with common storage
+    /// naming restrictions. Leading and trailing whitespace is removed from the result.</remarks>
+    /// <param name="value">The input string to sanitize for use in a blob path. Can be null, empty, or contain any characters.</param>
+    /// <returns>A string containing only letters, digits, periods (.), hyphens (-), and underscores (_), with all other
+    /// characters replaced by underscores. Returns "unknown" if the input is null, empty, or consists only of
+    /// whitespace or invalid characters.</returns>
+    #region private static string SanitizeForBlobPath(string value)
     private static string SanitizeForBlobPath(string value)
     {
         if (string.IsNullOrWhiteSpace(value)) return "unknown";
@@ -426,5 +523,6 @@ public class DefaultMessageStore : MessageStore
         }
         var result = builder.ToString().Trim();
         return string.IsNullOrEmpty(result) ? "unknown" : result;
-    }
+    } 
+    #endregion
 }

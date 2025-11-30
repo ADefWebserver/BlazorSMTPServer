@@ -40,18 +40,21 @@ var smtpServer = builder.AddProject<Projects.SMTPServerSvc>("smtpserversvc")
         endpoint.Port = 25;
         endpoint.IsExternal = true;
         endpoint.IsProxied = false; // Allow direct external access without proxy
+        endpoint.UriScheme = "tcp";
     })
     .WithEndpoint("smtp-port2", endpoint =>
     {
         endpoint.Port = 2525;
         endpoint.IsExternal = true;
         endpoint.IsProxied = false; // Allow direct external access without proxy
+        endpoint.UriScheme = "tcp";
     })
     .WithEndpoint("smtp-port3", endpoint =>
     {
         endpoint.Port = 587;
         endpoint.IsExternal = true;
         endpoint.IsProxied = false; // Allow direct external access without proxy
+        endpoint.UriScheme = "tcp";
     });
 
 // Optional: Add dependency so Blazor app can reference SMTP server if needed

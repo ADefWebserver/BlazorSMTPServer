@@ -1,12 +1,17 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Hosting;
 
 var builder = DistributedApplication.CreateBuilder(args);
 
 // Add Azurite storage emulator for development
 // This will automatically start Azurite container or use local installation
-var storage = builder.AddAzureStorage("storage")
-    .RunAsEmulator();
+var storage = builder.AddAzureStorage("storage");
+
+if (builder.Environment.IsDevelopment())
+{
+    storage.RunAsEmulator();
+}
 
 // Add Blob storage resource
 var blobs = storage.AddBlobs("blobs");
@@ -14,17 +19,22 @@ var blobs = storage.AddBlobs("blobs");
 // Add Table storage resource  
 var tables = storage.AddTables("tables");
 
+// Add Queue storage resource
+var queues = storage.AddQueues("queues");
+
 // Add the Blazor web application
 var blazorApp = builder.AddProject<Projects.BlazorSMTPServer>("blazorsmtpserver")
     // Allow the Blazor app to access the blob resource for reading messages
     .WithReference(blobs)
     // Ensure Blazor app also gets a tables connection for settings/password
-    .WithReference(tables);
+    .WithReference(tables)
+    .WithReference(queues);
 
 // Add the SMTP Server service with storage dependencies and expose SMTP ports
 var smtpServer = builder.AddProject<Projects.SMTPServerSvc>("smtpserversvc")
     .WithReference(blobs)
     .WithReference(tables)
+    .WithReference(queues)
     .WithEndpoint("smtp-port1", endpoint =>
     {
         endpoint.Port = 2525;

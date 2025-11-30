@@ -37,11 +37,17 @@ var smtpServer = builder.AddProject<Projects.SMTPServerSvc>("smtpserversvc")
     .WithReference(queues)
     .WithEndpoint("smtp-port1", endpoint =>
     {
-        endpoint.Port = 2525;
+        endpoint.Port = 25;
         endpoint.IsExternal = true;
         endpoint.IsProxied = false; // Allow direct external access without proxy
     })
     .WithEndpoint("smtp-port2", endpoint =>
+    {
+        endpoint.Port = 2525;
+        endpoint.IsExternal = true;
+        endpoint.IsProxied = false; // Allow direct external access without proxy
+    })
+    .WithEndpoint("smtp-port3", endpoint =>
     {
         endpoint.Port = 587;
         endpoint.IsExternal = true;

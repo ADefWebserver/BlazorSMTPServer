@@ -2,6 +2,7 @@ using System.Net.Mail;
 using System.Net;
 using Azure.Data.Tables;
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 
 namespace SMTPServerSvc.TestClient;
 
@@ -10,24 +11,26 @@ namespace SMTPServerSvc.TestClient;
 /// </summary>
 public class SmtpTestClient
 {
-    public static async Task TestSmtpServer(TableServiceClient tableServiceClient, string smtpHost)
+    public static async Task TestSmtpServer(TableServiceClient tableServiceClient, string smtpHost, IConfiguration configuration)
     {
         try
         {
             Console.WriteLine("Testing SMTP Server...");
 
             var servername = await GetServerNameAsync(tableServiceClient);
+            var allowedRecipient = await GetAllowedRecipientAsync(tableServiceClient, configuration);
+            var allowedEmail = allowedRecipient.Contains("@") ? allowedRecipient : $"{allowedRecipient}@{servername}";
 
             // Test 1: Send email to allowed recipient without authentication (should work)
-            await SendTestEmail(tableServiceClient, smtpHost, $"sender@{servername}", $"TestUserOne@{servername}",
+            await SendTestEmail(tableServiceClient, smtpHost, $"sender@{servername}", allowedEmail,
                 "Test Email Without Auth", "This is a test email without authentication.", false);
 
             // Test 2: Send email to disallowed recipient (should fail)
             await SendTestEmail(tableServiceClient, smtpHost, $"sender@{servername}", "notallowed@example.com",
                 "Test Email to Disallowed Recipient", "This should fail.", false);
 
-            // Test 3: Send email with authentication (should work)
-            await SendTestEmail(tableServiceClient, smtpHost, $"sender@{servername}", $"TestUserOne@{servername}",
+            // Test 3: Send email to allowed recipient with authentication (should work)
+            await SendTestEmail(tableServiceClient, smtpHost, $"sender@{servername}", allowedEmail,
                 "Test Email With Auth", "This is a test email with authentication.", true);
 
             // Test 4: Send email to 'abuse' role account (should work)
@@ -47,6 +50,40 @@ public class SmtpTestClient
         {
             Console.WriteLine($"Test failed: {ex.Message}");
         }
+    }
+
+    private static async Task<string> GetAllowedRecipientAsync(TableServiceClient tableServiceClient, IConfiguration configuration)
+    {
+        // 1. Try Configuration
+        var configAllowed = configuration["SmtpServer:AllowedRecipient"];
+        if (!string.IsNullOrWhiteSpace(configAllowed))
+        {
+            return configAllowed;
+        }
+
+        // 2. Try Table Storage
+        const string SettingsTableName = "SMTPSettings";
+        const string PartitionKey = "SmtpServer";
+        const string RowKey = "Current";
+        try
+        {
+            var table = tableServiceClient.GetTableClient(SettingsTableName);
+            var entityResponse = await table.GetEntityAsync<TableEntity>(PartitionKey, RowKey);
+            var entity = entityResponse.Value;
+
+            if (entity.TryGetValue("AllowedRecipient", out var valObj))
+            {
+                var val = valObj?.ToString();
+                if (!string.IsNullOrWhiteSpace(val)) return val;
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Warning: Could not read AllowedRecipient from table storage. {ex.Message}");
+        }
+
+        // 3. Fallback
+        return "TestUserOne";
     }
 
     private static async Task<int> GetFirstPortAsync(TableServiceClient tableServiceClient)

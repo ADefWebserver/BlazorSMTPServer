@@ -3,10 +3,12 @@
 @using Azure.Data.Tables
 @using BlazorSMTPServer.Components.Dialogs
 @using System.Globalization
+@using Microsoft.Extensions.Configuration
 @inject BlobEmailService EmailService
 @inject Microsoft.JSInterop.IJSRuntime JSRuntime
 @inject Radzen.DialogService DialogService
 @inject TableServiceClient TableServiceClient
+@inject IConfiguration Configuration
 
 <PageTitle>Inbox</PageTitle>
 
@@ -164,6 +166,20 @@
     {
         try
         {
+            var configAllowed = Configuration["SmtpServer:AllowedRecipient"];
+            if (!string.IsNullOrWhiteSpace(configAllowed))
+            {
+                _allowedRecipient = configAllowed;
+                var configServer = Configuration["SmtpServer:ServerName"];
+                if (!_allowedRecipient.Contains('@') && !string.IsNullOrWhiteSpace(configServer))
+                {
+                    _allowedRecipient = $"{_allowedRecipient}@{configServer}";
+                }
+                _settingsLoaded = true;
+                _settingsError = null;
+                return;
+            }
+
             var table = TableServiceClient.GetTableClient("SMTPSettings");
             var resp = await table.GetEntityIfExistsAsync<TableEntity>("SmtpServer", "Current");
             if (resp.HasValue)

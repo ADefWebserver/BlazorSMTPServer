@@ -31,9 +31,11 @@
   <ItemGroup>
     <Content Include="appsettings.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <TargetPath>SMTPServerSvc\appsettings.json</TargetPath>
     </Content>
     <Content Include="appsettings.*.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <TargetPath>SMTPServerSvc\%(FileName)%(Extension)</TargetPath>
     </Content>
   </ItemGroup>
 

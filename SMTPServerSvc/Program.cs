@@ -20,6 +20,10 @@ internal class Program
     {
         var builder = Host.CreateApplicationBuilder(args);
         builder.AddServiceDefaults();
+        builder.Services.AddWindowsService(options =>
+        {
+            options.ServiceName = "SMTPServerSvc";
+        });
 
         builder.Configuration.AddUserSecrets<Program>(optional: true);
 
@@ -95,17 +99,6 @@ internal class Program
             {
                 logger.LogDebug("Env {Key} => {Len} chars", kv.Key, kv.Value?.ToString()?.Length ?? 0);
             }
-
-            // Test Azure Storage connectivity
-            var blobClient = host.Services.GetRequiredService<BlobServiceClient>();
-            // Test TableServiceClient
-            var tableClient = host.Services.GetRequiredService<TableServiceClient>();
-
-            // Ensure the SMTPSettings table exists and contains the current settings from appsettings.json
-            await StartupStorageHelpers.EnsureSettingsTableAsync(tableClient, smtpConfig, logger);
-            await StartupStorageHelpers.TestBlobAsync(blobClient, "email-messages", logger);
-            await StartupStorageHelpers.TestTableAsync(tableClient, "SMTPServerLogs", logger);
-            await StartupStorageHelpers.TestTableAsync(tableClient, "spamlogs", logger);
 
             // Run the host
             await host.RunAsync();

@@ -1,6 +1,8 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Azure.Storage.Blobs;
+using Azure.Data.Tables;
 using SmtpServer;
 using SMTPServerSvc.Services;
 using SMTPServerSvc.Configuration;
@@ -18,6 +20,8 @@ public class SmtpServerHostedService : BackgroundService
     private readonly DefaultMessageStore _messageStore;
     private readonly DefaultMailboxFilter _mailboxFilter;
     private readonly DefaultUserAuthenticator _userAuthenticator;
+    private readonly BlobServiceClient _blobServiceClient;
+    private readonly TableServiceClient _tableServiceClient;
     private SmtpServer.SmtpServer? _smtpServer;
 
     public SmtpServerHostedService(
@@ -26,7 +30,9 @@ public class SmtpServerHostedService : BackgroundService
         SmtpServerConfiguration configuration,
         DefaultMessageStore messageStore,
         DefaultMailboxFilter mailboxFilter,
-        DefaultUserAuthenticator userAuthenticator)
+        DefaultUserAuthenticator userAuthenticator,
+        BlobServiceClient blobServiceClient,
+        TableServiceClient tableServiceClient)
     {
         _logger = logger;
         _serviceProvider = serviceProvider;
@@ -34,6 +40,8 @@ public class SmtpServerHostedService : BackgroundService
         _messageStore = messageStore;
         _mailboxFilter = mailboxFilter;
         _userAuthenticator = userAuthenticator;
+        _blobServiceClient = blobServiceClient;
+        _tableServiceClient = tableServiceClient;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -42,6 +50,12 @@ public class SmtpServerHostedService : BackgroundService
 
         try
         {
+            // Ensure the SMTPSettings table exists and contains the current settings from appsettings.json
+            await StartupStorageHelpers.EnsureSettingsTableAsync(_tableServiceClient, _configuration, _logger);
+            await StartupStorageHelpers.TestBlobAsync(_blobServiceClient, "email-messages", _logger);
+            await StartupStorageHelpers.TestTableAsync(_tableServiceClient, "SMTPServerLogs", _logger);
+            await StartupStorageHelpers.TestTableAsync(_tableServiceClient, "spamlogs", _logger);
+
             // Configure SMTP server options using configuration
             var optionsBuilder = new SmtpServerOptionsBuilder()
                 .ServerName(_configuration.ServerName);

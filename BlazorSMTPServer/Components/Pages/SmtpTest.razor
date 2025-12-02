@@ -1,10 +1,8 @@
 @using SMTPServerSvc.TestClient
-@using Microsoft.Extensions.Configuration
 @inject IJSRuntime JSRuntime
 @inject Azure.Data.Tables.TableServiceClient TableServiceClient
 @inject NavigationManager Nav
 @inject IHttpContextAccessor HttpContextAccessor
-@inject IConfiguration Configuration
 
 <PageTitle>SMTP Server Test</PageTitle>
 
@@ -91,7 +89,7 @@
     {
         isRunning = true;
         StateHasChanged();
-        await RunTest(async (host) => await SmtpTestClient.TestSmtpServer(TableServiceClient, host, Configuration));
+        await RunTest(async (host) => await SmtpTestClient.TestSmtpServer(TableServiceClient, host));
     }
 
     private async Task RunSpamTest()

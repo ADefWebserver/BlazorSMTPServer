@@ -2,7 +2,6 @@ using System.Net.Mail;
 using System.Net;
 using Azure.Data.Tables;
 using System.Text.Json;
-using Microsoft.Extensions.Configuration;
 
 namespace SMTPServerSvc.TestClient;
 
@@ -11,14 +10,14 @@ namespace SMTPServerSvc.TestClient;
 /// </summary>
 public class SmtpTestClient
 {
-    public static async Task TestSmtpServer(TableServiceClient tableServiceClient, string smtpHost, IConfiguration configuration)
+    public static async Task TestSmtpServer(TableServiceClient tableServiceClient, string smtpHost)
     {
         try
         {
             Console.WriteLine("Testing SMTP Server...");
 
             var servername = await GetServerNameAsync(tableServiceClient);
-            var allowedRecipient = await GetAllowedRecipientAsync(tableServiceClient, configuration);
+            var allowedRecipient = await GetAllowedRecipientAsync(tableServiceClient);
             var allowedEmail = allowedRecipient.Contains("@") ? allowedRecipient : $"{allowedRecipient}@{servername}";
 
             // Test 1: Send email to allowed recipient without authentication (should work)
@@ -52,16 +51,8 @@ public class SmtpTestClient
         }
     }
 
-    private static async Task<string> GetAllowedRecipientAsync(TableServiceClient tableServiceClient, IConfiguration configuration)
+    private static async Task<string> GetAllowedRecipientAsync(TableServiceClient tableServiceClient)
     {
-        // 1. Try Configuration
-        var configAllowed = configuration["SmtpServer:AllowedRecipient"];
-        if (!string.IsNullOrWhiteSpace(configAllowed))
-        {
-            return configAllowed;
-        }
-
-        // 2. Try Table Storage
         const string SettingsTableName = "SMTPSettings";
         const string PartitionKey = "SmtpServer";
         const string RowKey = "Current";
@@ -82,7 +73,7 @@ public class SmtpTestClient
             Console.WriteLine($"Warning: Could not read AllowedRecipient from table storage. {ex.Message}");
         }
 
-        // 3. Fallback
+        // Fallback
         return "TestUserOne";
     }
 

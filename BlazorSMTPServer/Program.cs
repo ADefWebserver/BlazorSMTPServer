@@ -47,18 +47,6 @@ public class Program
         builder.Services.AddHttpContextAccessor();
         var app = builder.Build();
 
-        // Ensure settings table contains current values from configuration (helps the Blazor UI read them)
-        try
-        {
-            var tableClient = app.Services.GetRequiredService<TableServiceClient>();
-            await EnsureSettingsTableAsync(tableClient, builder.Configuration, app.Services.GetRequiredService<ILogger<Program>>());
-        }
-        catch (Exception ex)
-        {
-            var logger = app.Services.GetService<ILogger<Program>>();
-            logger?.LogWarning(ex, "Failed to ensure settings table at startup");
-        }
-
         app.MapDefaultEndpoints();
 
         // needed for session usage
@@ -126,47 +114,7 @@ public class Program
             .AddInteractiveServerRenderMode();
 
         app.Run();
-    }
-
-    private static async Task EnsureSettingsTableAsync(TableServiceClient tableServiceClient, IConfiguration configuration, ILogger logger)
-    {
-        const string SettingsTableName = "SMTPSettings";
-        const string PartitionKey = "SmtpServer";
-        const string RowKey = "Current";
-
-        try
-        {
-            logger.LogInformation("Ensuring settings table '{Table}' exists and is populated", SettingsTableName);
-            var table = tableServiceClient.GetTableClient(SettingsTableName);
-            await table.CreateIfNotExistsAsync();
-
-            var ports = configuration.GetSection("SmtpServer:Ports").Get<int[]>() ?? Array.Empty<int>();
-            var portsCsv = string.Join(", ", ports);
-            var portsJson = JsonSerializer.Serialize(ports);
-
-            var entity = new TableEntity(PartitionKey, RowKey)
-            {
-                { "ServerName", configuration["SmtpServer:ServerName"] ?? string.Empty },
-                { "Ports", portsCsv },
-                { "PortsJson", portsJson },
-                { "AllowedRecipient", configuration["SmtpServer:AllowedRecipient"] ?? string.Empty },
-                { "AllowedUsername", configuration["SmtpServer:AllowedUsername"] ?? string.Empty },
-                { "AllowedPassword", configuration["SmtpServer:AllowedPassword"] ?? string.Empty },
-                { "SpamhausKey", configuration["SmtpServer:SpamhausKey"] ?? string.Empty },
-                { "EnableSpamFiltering", bool.TryParse(configuration["SmtpServer:EnableSpamFiltering"], out var esf) && esf },
-                { "EnableSpfCheck", bool.TryParse(configuration["SmtpServer:EnableSpfCheck"], out var espf) && espf },
-                { "EnableDmarcCheck", bool.TryParse(configuration["SmtpServer:EnableDmarcCheck"], out var edmarc) && edmarc },
-                { "EnableDkimCheck", bool.TryParse(configuration["SmtpServer:EnableDkimCheck"], out var edkim) && edkim }
-            };
-
-            await table.UpsertEntityAsync(entity);
-            logger.LogInformation("SMTP settings written to table '{Table}'", SettingsTableName);
-        }
-        catch (Exception ex)
-        {
-            logger.LogWarning(ex, "Failed to write SMTP settings to table");
-        }
-    }
+    }    
 }
 
 public class AppPasswordValidator

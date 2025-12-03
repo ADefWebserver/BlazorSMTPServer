@@ -114,7 +114,8 @@ public class DefaultMailboxFilter : IMailboxFilter
             if (_configuration.EnableSpfCheck)
             {
                 var ip = ipAddress.ToString();
-                var domain = @from.Host;
+                var domain = @from.Host.ToLower();
+
                 bool spfPass = await _authService.ValidateSpfAsync(ip, domain);
                 
                 // Store SPF result for DMARC check later in MessageStore
@@ -125,6 +126,7 @@ public class DefaultMailboxFilter : IMailboxFilter
                 {
                     _logger.LogWarning("SPF Check Failed for {Domain} from IP {IP}", domain, ip);
                     context.Properties["IsSpam"] = true;
+                    context.Properties["SpamIP"] = ip;
                     await LogSpamDetectionAsync(context, fromAddress, ip);
                 }
             }

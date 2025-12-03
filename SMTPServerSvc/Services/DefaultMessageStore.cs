@@ -298,7 +298,7 @@ public class DefaultMessageStore : MessageStore
         try
         {
             var firstTo = transaction.To?.OfType<SmtpServer.Mail.IMailbox>().FirstOrDefault();
-            recipientUser = firstTo?.User ?? "unknown";
+            recipientUser = firstTo?.User?.ToLowerInvariant() ?? "unknown";
         }
         catch (Exception ex)
         {

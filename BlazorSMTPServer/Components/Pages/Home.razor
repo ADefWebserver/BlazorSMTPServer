@@ -169,7 +169,7 @@
             var configAllowed = Configuration["SmtpServer:AllowedRecipient"];
             if (!string.IsNullOrWhiteSpace(configAllowed))
             {
-                _allowedRecipient = configAllowed;
+                _allowedRecipient = configAllowed.ToLower();
                 var configServer = Configuration["SmtpServer:ServerName"];
                 if (!_allowedRecipient.Contains('@') && !string.IsNullOrWhiteSpace(configServer))
                 {

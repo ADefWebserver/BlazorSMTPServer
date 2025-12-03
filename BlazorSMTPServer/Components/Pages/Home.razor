@@ -170,7 +170,7 @@
         set.Add("spam");
 
         // Include configured recipient local-part if present
-        var configuredUser = GetUserFromEmail(_allowedRecipient);
+        var configuredUser = GetUserFromEmail(_allowedRecipient.ToLower());
         if (!string.IsNullOrWhiteSpace(configuredUser)) set.Add(configuredUser);
         return set.OrderBy(s => s, StringComparer.OrdinalIgnoreCase).ToList();
     }

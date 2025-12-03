@@ -317,10 +317,14 @@
             using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(emlContent));
             var message = MimeMessage.Load(stream);
 
+            // Build a dictionary of Content-ID to data URL for embedded images
+            var cidMap = BuildCidMap(message);
+
             // Prefer HTML body if available
             if (!string.IsNullOrEmpty(message.HtmlBody))
             {
-                return (message.HtmlBody, true);
+                var html = ReplaceCidReferences(message.HtmlBody, cidMap);
+                return (html, true);
             }
 
             // Fall back to text body
@@ -333,7 +337,8 @@
             var htmlPart = message.BodyParts.OfType<TextPart>().FirstOrDefault(p => p.IsHtml);
             if (htmlPart != null)
             {
-                return (htmlPart.Text, true);
+                var html = ReplaceCidReferences(htmlPart.Text, cidMap);
+                return (html, true);
             }
 
             var textPart = message.BodyParts.OfType<TextPart>().FirstOrDefault();
@@ -362,6 +367,62 @@
         if (second < 0)
             return text.Substring(afterFirst);
         return text.Substring(second + 2);
+    }
+
+    /// <summary>
+    /// Builds a dictionary mapping Content-ID values to data URLs for embedded images.
+    /// </summary>
+    private static Dictionary<string, string> BuildCidMap(MimeMessage message)
+    {
+        var cidMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var bodyPart in message.BodyParts)
+        {
+            if (bodyPart is MimePart mimePart && !string.IsNullOrEmpty(mimePart.ContentId))
+            {
+                // Get the Content-ID without angle brackets
+                var contentId = mimePart.ContentId.Trim('<', '>');
+                
+                // Only process image types
+                if (mimePart.ContentType.MediaType.Equals("image", StringComparison.OrdinalIgnoreCase))
+                {
+                    try
+                    {
+                        using var memoryStream = new MemoryStream();
+                        mimePart.Content.DecodeTo(memoryStream);
+                        var base64 = Convert.ToBase64String(memoryStream.ToArray());
+                        var mimeType = mimePart.ContentType.MimeType;
+                        var dataUrl = $"data:{mimeType};base64,{base64}";
+                        cidMap[contentId] = dataUrl;
+                    }
+                    catch
+                    {
+                        // Skip if we can't decode the image
+                    }
+                }
+            }
+        }
+
+        return cidMap;
+    }
+
+    /// <summary>
+    /// Replaces cid: references in HTML with data URLs from the CID map.
+    /// </summary>
+    private static string ReplaceCidReferences(string html, Dictionary<string, string> cidMap)
+    {
+        if (string.IsNullOrEmpty(html) || cidMap.Count == 0)
+            return html;
+
+        // Replace cid: references with data URLs
+        // Pattern matches src="cid:..." or src='cid:...'
+        foreach (var kvp in cidMap)
+        {
+            // Handle various formats: cid:contentId or cid:contentId@domain
+            html = html.Replace($"cid:{kvp.Key}", kvp.Value, StringComparison.OrdinalIgnoreCase);
+        }
+
+        return html;
     }
 
     private static string? GetHeader(string raw, string headerName)

@@ -4,6 +4,7 @@
 @using BlazorSMTPServer.Components.Dialogs
 @using System.Globalization
 @using Microsoft.Extensions.Configuration
+@using MimeKit
 @inject BlobEmailService EmailService
 @inject Microsoft.JSInterop.IJSRuntime JSRuntime
 @inject Radzen.DialogService DialogService
@@ -91,7 +92,18 @@
                     <p><strong>Received:</strong> @_currentEmail.Metadata.Received.ToLocalTime()</p>
                     <p><strong>Recipient User:</strong> @_currentEmail.Metadata.RecipientUser</p>
                     <hr />
-                    <pre style="white-space:pre-wrap; font-size:0.82rem; line-height:1.15rem;">@_currentBody</pre>
+                    @if (_isHtmlBody && !string.IsNullOrEmpty(_currentBody))
+                    {
+                        <iframe srcdoc="@_currentBody" 
+                                style="width:100%; height:500px; border:1px solid #ccc; background:#fff;" 
+                                sandbox="allow-same-origin" 
+                                title="Email content">
+                        </iframe>
+                    }
+                    else
+                    {
+                        <pre style="white-space:pre-wrap; font-size:0.82rem; line-height:1.15rem;">@_currentBody</pre>
+                    }
                 </div>
             }
         </div>
@@ -113,6 +125,7 @@
     private string? _allowedRecipient;
 
     private string? _currentBody;
+    private bool _isHtmlBody;
 
     private string DisplaySubject(string? subject) => string.IsNullOrWhiteSpace(subject) ? "(no subject)" : subject!;
 
@@ -255,12 +268,16 @@
         _selectedMessageId = id;
         _currentEmail = null;
         _currentBody = null;
+        _isHtmlBody = false;
         _isLoadingContent = true;
         StateHasChanged();
         try
         {
             _currentEmail = await EmailService.GetEmailAsync(id);
-            _currentBody = _currentEmail is null ? null : ExtractBody(_currentEmail.RawEml);
+            if (_currentEmail is not null)
+            {
+                (_currentBody, _isHtmlBody) = ExtractBodyWithMimeKit(_currentEmail.RawEml);
+            }
         }
         finally
         {
@@ -269,23 +286,82 @@
         }
     }
 
-    private static string ExtractBody(string raw)
+    private static (string Body, bool IsHtml) ExtractBodyWithMimeKit(string raw)
+    {
+        if (string.IsNullOrEmpty(raw)) 
+            return (string.Empty, false);
+
+        try
+        {
+            // Skip custom X-SMTP-Server headers to get to the actual RFC822 message
+            var normalizedRaw = raw.Replace("\r\n", "\n");
+            var headerEnd = normalizedRaw.IndexOf("\n\n");
+            string emlContent = raw;
+            
+            if (headerEnd > 0)
+            {
+                // Check if there's a second header block (custom headers followed by real headers)
+                var afterFirst = headerEnd + 2;
+                var firstLineAfter = normalizedRaw.Substring(afterFirst).Split('\n').FirstOrDefault() ?? "";
+                
+                // If the line after first blank looks like a header (contains ':'), we have custom headers
+                if (firstLineAfter.Contains(':') && !firstLineAfter.StartsWith(" ") && !firstLineAfter.StartsWith("\t"))
+                {
+                    // Use content starting from after custom headers
+                    emlContent = raw.Substring(raw.IndexOf("\r\n\r\n") + 4);
+                    if (emlContent == raw) // fallback if \r\n\r\n not found
+                        emlContent = raw.Substring(headerEnd + 2);
+                }
+            }
+
+            using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(emlContent));
+            var message = MimeMessage.Load(stream);
+
+            // Prefer HTML body if available
+            if (!string.IsNullOrEmpty(message.HtmlBody))
+            {
+                return (message.HtmlBody, true);
+            }
+
+            // Fall back to text body
+            if (!string.IsNullOrEmpty(message.TextBody))
+            {
+                return (message.TextBody, false);
+            }
+
+            // If no body parts found, try to get content from body parts directly
+            var htmlPart = message.BodyParts.OfType<TextPart>().FirstOrDefault(p => p.IsHtml);
+            if (htmlPart != null)
+            {
+                return (htmlPart.Text, true);
+            }
+
+            var textPart = message.BodyParts.OfType<TextPart>().FirstOrDefault();
+            if (textPart != null)
+            {
+                return (textPart.Text, false);
+            }
+
+            return ("(No readable content)", false);
+        }
+        catch (Exception ex)
+        {
+            // If MimeKit parsing fails, fall back to simple extraction
+            return (FallbackExtractBody(raw) + $"\n\n[Parse error: {ex.Message}]", false);
+        }
+    }
+
+    private static string FallbackExtractBody(string raw)
     {
         if (string.IsNullOrEmpty(raw)) return string.Empty;
-        // Normalize line endings
         var text = raw.Replace("\r\n", "\n");
-        // First blank line ends custom headers, second ends original RFC headers
         var first = text.IndexOf("\n\n");
-        if (first < 0) return raw; // no headers detected
+        if (first < 0) return raw;
         var afterFirst = first + 2;
         var second = text.IndexOf("\n\n", afterFirst);
         if (second < 0)
-        {
-            // If only one header block, treat remainder as body
-            return text.Substring(afterFirst).Replace('\n', '\n');
-        }
-        var body = text.Substring(second + 2);
-        return body;
+            return text.Substring(afterFirst);
+        return text.Substring(second + 2);
     }
 
     private static string? GetHeader(string raw, string headerName)
@@ -335,7 +411,8 @@
         }
 
         var quotedHeader = $"From: {originalFrom}\nSent: {sentDisplay}\nTo: {originalTo}\nSubject: {originalSubject}";
-        var originalBody = _currentBody ?? ExtractBody(_currentEmail.RawEml);
+        var (extractedBody, _) = ExtractBodyWithMimeKit(_currentEmail.RawEml);
+        var originalBody = _currentBody ?? extractedBody;
         var defaultBody = "\n\n-----Original Message-----\n" + quotedHeader + "\n\n" + originalBody;
 
         var result = await DialogService.OpenAsync<ComposeEmailDialog>(

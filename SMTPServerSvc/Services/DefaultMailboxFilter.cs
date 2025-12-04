@@ -109,47 +109,6 @@ public class DefaultMailboxFilter : IMailboxFilter
                     return true;
                 }
             }
-
-            // SPF Check
-            if (_configuration.EnableSpfCheck)
-            {
-                var ip = ipAddress.ToString();
-                var domain = @from.Host.ToLower();
-
-                bool spfPass = await _authService.ValidateSpfAsync(ip, domain);
-                
-                // Store SPF result for DMARC check later in MessageStore
-                context.Properties["SpfPass"] = spfPass;
-                context.Properties["FromDomain"] = domain;
-
-                if (!spfPass)
-                {
-                    _logger.LogWarning("SPF Check Failed for {Domain} from IP {IP}", domain, ip);
-                    context.Properties["IsSpam"] = true;
-                    context.Properties["SpamIP"] = ip;
-                    await LogSpamDetectionAsync(context, fromAddress, ip);
-                }
-            }
-
-            // DMARC Check (Policy only at this stage)
-            if (_configuration.EnableDmarcCheck)
-            {
-                var domain = @from.Host;
-                var dmarcPolicy = await _authService.GetDmarcPolicyAsync(domain);
-                if (!string.IsNullOrEmpty(dmarcPolicy))
-                {
-                    _logger.LogInformation("DMARC Policy for {Domain}: {Policy}", domain, dmarcPolicy);
-                    // We cannot fully validate DMARC without DKIM (which requires body), 
-                    // but we can log the policy presence.
-                }
-            }
-
-            // DKIM Check (Not possible at MAIL FROM stage)
-            if (_configuration.EnableDkimCheck)
-            {
-                // DKIM requires message body, so we cannot check it here.
-                // This would typically be done in IMessageStore.SaveAsync
-            }
         }
 
         _logger.LogInformation("Accepting mail from unauthenticated user: {FromAddress}", fromAddress);

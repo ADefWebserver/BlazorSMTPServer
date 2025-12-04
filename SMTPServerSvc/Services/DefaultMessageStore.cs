@@ -286,8 +286,18 @@ public class DefaultMessageStore : MessageStore
     #region private async Task SaveToBlobAsync(ISessionContext context, IMessageTransaction transaction, ReadOnlySequence<byte> buffer, MimeMessage message, string sessionId, string transactionId, CancellationToken cancellationToken)
     private async Task SaveToBlobAsync(ISessionContext context, IMessageTransaction transaction, ReadOnlySequence<byte> buffer, MimeMessage message, string sessionId, string transactionId, CancellationToken cancellationToken)
     {
-        // Check for spam tag
+        // Check for spam tag and track reasons
         bool isSpam = context.Properties.ContainsKey("IsSpam") && (bool)context.Properties["IsSpam"];
+        var spamReasons = new List<string>();
+
+        // Check if spam was already flagged by Spamhaus in DefaultMailboxFilter
+        if (isSpam)
+        {
+            var spamIp = context.Properties.ContainsKey("SpamIP") ? context.Properties["SpamIP"]?.ToString() : null;
+            var reason = $"Spamhaus blocklist (IP: {spamIp ?? "unknown"})";
+            spamReasons.Add(reason);
+            _logger.LogWarning("Email already flagged as spam BEFORE SPF check - Reason: {Reason}", reason);
+        }
 
         // Get the correct container client
         var containerClient = isSpam ? _blobServiceClient!.GetBlobContainerClient(_containerName) : _containerClient!;
@@ -317,37 +327,130 @@ public class DefaultMessageStore : MessageStore
         var originalSubject = message.Subject ?? "(no subject)";
         var originalFrom = message.From.ToString();
 
-        // DKIM/DMARC Validation (Incoming)
+        // DKIM/DMARC/SPF Validation (Incoming)
         bool dkimPass = false;
         bool dmarcPass = false;
+        bool spfPass = context.Properties.ContainsKey("SpfPass") && (bool)context.Properties["SpfPass"];
 
-        // Re-implementing the manual extraction from original code for consistency
-        static string? HeaderFromOriginal(string content, string key)
+        // DKIM Validation - use the full message for proper cryptographic verification
+        if (_configuration.EnableDkimCheck)
         {
-            using var sr = new StringReader(content);
-            string? l;
-            var prefix = key + ":";
-            while ((l = sr.ReadLine()) != null)
+            dkimPass = await _authService.ValidateDkimAsync(message);
+            if (dkimPass)
             {
-                if (string.IsNullOrWhiteSpace(l)) break;
-                if (l.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                _logger.LogInformation("DKIM verification passed for message");
+            }
+            else
+            {
+                _logger.LogWarning("DKIM verification failed for message");
+            }
+        }
+
+        // SPF Check using originating sender from Received headers
+        // This validates the original sender rather than just the connecting IP
+        if (_configuration.EnableSpfCheck && !spfPass)
+        {
+            var (originatingIp, originatingDomain) = ExtractOriginatingSender(message);
+            
+            if (!string.IsNullOrEmpty(originatingIp) && !string.IsNullOrEmpty(originatingDomain))
+            {
+                _logger.LogInformation("Performing SPF check for originating sender - IP: {IP}, Domain: {Domain}", originatingIp, originatingDomain);
+                spfPass = await _authService.ValidateSpfAsync(originatingIp, originatingDomain);
+                
+                if (!spfPass)
                 {
-                    return l.Substring(prefix.Length).Trim();
+                    _logger.LogWarning("SPF Check Failed for originating sender {Domain} from IP {IP}", originatingDomain, originatingIp);
+                    var reason = $"SPF failed (Domain: {originatingDomain}, IP: {originatingIp})";
+                    spamReasons.Add(reason);
+                    if (!isSpam)
+                    {
+                        isSpam = true;
+                        context.Properties["IsSpam"] = true;
+                        context.Properties["SpamIP"] = originatingIp;
+                    }
+                }
+                else
+                {
+                    _logger.LogInformation("SPF Check Passed for originating sender {Domain} from IP {IP}", originatingDomain, originatingIp);
                 }
             }
-            return null;
+            else
+            {
+                // Fallback: use the From header domain if we couldn't extract from Received headers
+                var fromAddress = message.From.OfType<MailboxAddress>().FirstOrDefault();
+                if (fromAddress != null)
+                {
+                    var fromDomain = fromAddress.Domain.ToLowerInvariant();
+                    
+                    // Get the connecting IP for fallback SPF check
+                    string? connectingIp = null;
+                    if (context.Properties.TryGetValue("EndpointListener:RemoteEndPoint", out var endpointObj) && endpointObj is System.Net.IPEndPoint ipEndPoint)
+                    {
+                        connectingIp = ipEndPoint.Address.ToString();
+                    }
+                    
+                    if (!string.IsNullOrEmpty(connectingIp))
+                    {
+                        _logger.LogInformation("Performing fallback SPF check using From domain - IP: {IP}, Domain: {Domain}", connectingIp, fromDomain);
+                        spfPass = await _authService.ValidateSpfAsync(connectingIp, fromDomain);
+                        
+                        if (!spfPass)
+                        {
+                            _logger.LogWarning("SPF Check Failed (fallback) for {Domain} from IP {IP}", fromDomain, connectingIp);
+                            var reason = $"SPF failed - fallback (Domain: {fromDomain}, IP: {connectingIp})";
+                            spamReasons.Add(reason);
+                            if (!isSpam)
+                            {
+                                isSpam = true;
+                                context.Properties["IsSpam"] = true;
+                                context.Properties["SpamIP"] = connectingIp;
+                            }
+                        }
+                    }
+                }
+            }
         }
-        string? dkimSignature = HeaderFromOriginal(messageContent, "DKIM-Signature");
 
-        if (_configuration.EnableDkimCheck && !string.IsNullOrEmpty(dkimSignature))
-        {
-            dkimPass = await _authService.ValidateDkimAsync(dkimSignature);
-        }
-
+        // DMARC Check - requires either SPF or DKIM to pass
         if (_configuration.EnableDmarcCheck)
         {
-            bool spfPass = context.Properties.ContainsKey("SpfPass") && (bool)context.Properties["SpfPass"];
-            if (spfPass || dkimPass) dmarcPass = true;
+            var fromAddress = message.From.OfType<MailboxAddress>().FirstOrDefault();
+            if (fromAddress != null)
+            {
+                var fromDomain = fromAddress.Domain;
+                var dmarcPolicy = await _authService.GetDmarcPolicyAsync(fromDomain);
+                
+                if (!string.IsNullOrEmpty(dmarcPolicy))
+                {
+                    _logger.LogInformation("DMARC Policy for {Domain}: {Policy}", fromDomain, dmarcPolicy);
+                    
+                    // DMARC passes if either SPF or DKIM passes with alignment
+                    dmarcPass = spfPass || dkimPass;
+                    
+                    if (!dmarcPass)
+                    {
+                        _logger.LogWarning("DMARC Check Failed for {Domain} - SPF: {SpfPass}, DKIM: {DkimPass}, Policy: {Policy}", 
+                            fromDomain, spfPass, dkimPass, dmarcPolicy);
+                        
+                        // Apply DMARC policy
+                        if (dmarcPolicy.Equals("reject", StringComparison.OrdinalIgnoreCase) ||
+                            dmarcPolicy.Equals("quarantine", StringComparison.OrdinalIgnoreCase))
+                        {
+                            var reason = $"DMARC failed (Domain: {fromDomain}, Policy: {dmarcPolicy}, SPF: {spfPass}, DKIM: {dkimPass})";
+                            spamReasons.Add(reason);
+                            if (!isSpam)
+                            {
+                                isSpam = true;
+                                context.Properties["IsSpam"] = true;
+                            }
+                        }
+                    }
+                    else
+                    {
+                        _logger.LogInformation("DMARC Check Passed for {Domain}", fromDomain);
+                    }
+                }
+            }
         }
 
         // Add metadata headers to the message object
@@ -356,9 +459,20 @@ public class DefaultMessageStore : MessageStore
         message.Headers.Add("X-SMTP-Server-Transaction", transactionId);
         message.Headers.Add("X-SMTP-Server-BlobName", blobPath);
         message.Headers.Add("X-SMTP-Server-Recipient-User", recipientUser);
-        if (isSpam) message.Headers.Add("X-SMTP-Server-Spam", "True");
-        if (dkimPass) message.Headers.Add("X-SMTP-Server-DKIM", "Pass");
-        if (dmarcPass) message.Headers.Add("X-SMTP-Server-DMARC", "Pass");
+        message.Headers.Add("X-SMTP-Server-SPF", spfPass ? "Pass" : "Fail");
+        message.Headers.Add("X-SMTP-Server-DKIM", dkimPass ? "Pass" : "Fail");
+        message.Headers.Add("X-SMTP-Server-DMARC", dmarcPass ? "Pass" : "Fail");
+        if (isSpam)
+        {
+            message.Headers.Add("X-SMTP-Server-Spam", "True");
+            var spamReasonHeader = spamReasons.Any() ? string.Join("; ", spamReasons) : "Unknown";
+            message.Headers.Add("X-SMTP-Server-Spam-Reason", spamReasonHeader);
+            _logger.LogWarning("Email marked as SPAM. Reasons: {Reasons}", spamReasonHeader);
+        }
+        else
+        {
+            message.Headers.Add("X-SMTP-Server-Spam", "False");
+        }
 
         // DKIM Signing (for local storage - maybe we want to sign it too?)
         // Use configuration first, then table
@@ -542,5 +656,177 @@ public class DefaultMessageStore : MessageStore
         var result = builder.ToString().Trim();
         return string.IsNullOrEmpty(result) ? "unknown" : result;
     } 
+    #endregion
+
+    /// <summary>
+    /// Extracts the originating SMTP sender information from email Received headers.
+    /// Parses the chain of Received headers to identify the first external SMTP server that sent the email.
+    /// </summary>
+    /// <param name="message">The parsed MIME message containing headers.</param>
+    /// <returns>A tuple containing the IP address and domain of the originating sender, or (null, null) if not found.</returns>
+    #region private (string? IpAddress, string? Domain) ExtractOriginatingSender(MimeMessage message)
+    private (string? IpAddress, string? Domain) ExtractOriginatingSender(MimeMessage message)
+    {
+        try
+        {
+            // Received headers are added in reverse order - the first one is the most recent (our server)
+            // We want to find the first external sender, which would be the last Received header
+            // or the first one that contains an external IP
+            var receivedHeaders = message.Headers
+                .Where(h => h.Id == HeaderId.Received)
+                .Select(h => h.Value)
+                .ToList();
+
+            if (!receivedHeaders.Any())
+            {
+                _logger.LogDebug("No Received headers found in message");
+                return (null, null);
+            }
+
+            // Parse each Received header to extract IP and domain
+            // Format example: "from mail.example.com (mail.example.com [192.168.1.1]) by ourserver.com ..."
+            // or: "from [192.168.1.1] (helo=mail.example.com) by ourserver.com ..."
+            
+            // Start from the last (oldest) Received header - this is typically the originating server
+            foreach (var header in receivedHeaders.AsEnumerable().Reverse())
+            {
+                var parsed = ParseReceivedHeader(header);
+                if (parsed.IpAddress != null && !IsPrivateOrLocalIp(parsed.IpAddress))
+                {
+                    _logger.LogDebug("Found originating sender - IP: {IP}, Domain: {Domain}", parsed.IpAddress, parsed.Domain);
+                    return parsed;
+                }
+            }
+
+            // If all Received headers have private IPs, try the first (most recent) external one
+            foreach (var header in receivedHeaders)
+            {
+                var parsed = ParseReceivedHeader(header);
+                if (parsed.IpAddress != null && !IsPrivateOrLocalIp(parsed.IpAddress))
+                {
+                    _logger.LogDebug("Found external sender - IP: {IP}, Domain: {Domain}", parsed.IpAddress, parsed.Domain);
+                    return parsed;
+                }
+            }
+
+            _logger.LogDebug("No external IP found in Received headers");
+            return (null, null);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to extract originating sender from Received headers");
+            return (null, null);
+        }
+    }
+    #endregion
+
+    /// <summary>
+    /// Parses a single Received header to extract IP address and domain.
+    /// </summary>
+    /// <param name="header">The Received header value.</param>
+    /// <returns>A tuple containing the extracted IP address and domain.</returns>
+    #region private (string? IpAddress, string? Domain) ParseReceivedHeader(string header)
+    private (string? IpAddress, string? Domain) ParseReceivedHeader(string header)
+    {
+        string? ipAddress = null;
+        string? domain = null;
+
+        try
+        {
+            // Try to extract IP address from brackets [x.x.x.x] or (x.x.x.x)
+            // Common formats:
+            // "from mail.example.com ([192.168.1.1])"
+            // "from mail.example.com (192.168.1.1)"
+            // "from [192.168.1.1]"
+            // "from mail.example.com (mail.example.com [192.168.1.1])"
+
+            // Extract IP from square brackets first
+            var ipMatch = System.Text.RegularExpressions.Regex.Match(header, @"\[(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\]");
+            if (ipMatch.Success)
+            {
+                ipAddress = ipMatch.Groups[1].Value;
+            }
+            else
+            {
+                // Try to find IP in parentheses
+                ipMatch = System.Text.RegularExpressions.Regex.Match(header, @"\((\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\)");
+                if (ipMatch.Success)
+                {
+                    ipAddress = ipMatch.Groups[1].Value;
+                }
+            }
+
+            // Extract domain from "from <domain>" pattern
+            var domainMatch = System.Text.RegularExpressions.Regex.Match(header, @"from\s+([a-zA-Z0-9][-a-zA-Z0-9.]*[a-zA-Z0-9])\s", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            if (domainMatch.Success)
+            {
+                var extractedDomain = domainMatch.Groups[1].Value;
+                // Ensure it looks like a domain (has at least one dot)
+                if (extractedDomain.Contains('.'))
+                {
+                    domain = extractedDomain.ToLowerInvariant();
+                }
+            }
+
+            // If no domain found in "from", try helo= pattern
+            if (domain == null)
+            {
+                var heloMatch = System.Text.RegularExpressions.Regex.Match(header, @"helo=([a-zA-Z0-9][-a-zA-Z0-9.]*[a-zA-Z0-9])", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                if (heloMatch.Success)
+                {
+                    var extractedDomain = heloMatch.Groups[1].Value;
+                    if (extractedDomain.Contains('.'))
+                    {
+                        domain = extractedDomain.ToLowerInvariant();
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to parse Received header: {Header}", header);
+        }
+
+        return (ipAddress, domain);
+    }
+    #endregion
+
+    /// <summary>
+    /// Checks if an IP address is a private or local address.
+    /// </summary>
+    /// <param name="ipString">The IP address string to check.</param>
+    /// <returns>True if the IP is private or local; otherwise false.</returns>
+    #region private static bool IsPrivateOrLocalIp(string ipString)
+    private static bool IsPrivateOrLocalIp(string ipString)
+    {
+        if (!System.Net.IPAddress.TryParse(ipString, out var ip))
+            return true; // Invalid IPs treated as private
+
+        var bytes = ip.GetAddressBytes();
+        if (bytes.Length != 4)
+            return false; // IPv6 handling could be added
+
+        // 10.x.x.x
+        if (bytes[0] == 10)
+            return true;
+
+        // 172.16.x.x - 172.31.x.x
+        if (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31)
+            return true;
+
+        // 192.168.x.x
+        if (bytes[0] == 192 && bytes[1] == 168)
+            return true;
+
+        // 127.x.x.x (localhost)
+        if (bytes[0] == 127)
+            return true;
+
+        // 0.x.x.x
+        if (bytes[0] == 0)
+            return true;
+
+        return false;
+    }
     #endregion
 }

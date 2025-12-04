@@ -145,7 +145,7 @@
         }
         else if (!string.IsNullOrWhiteSpace(_selectedRecipient))
         {
-            SelectRecipient(_selectedRecipient);
+            SelectRecipient(_selectedRecipient.ToLower());
         }
         else if (_recipientFolders.Count > 0)
         {

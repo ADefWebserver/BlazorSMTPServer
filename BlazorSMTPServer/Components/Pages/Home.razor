@@ -139,13 +139,14 @@
 
         // Prefer selecting the configured user's folder if available, otherwise keep current selection or pick first
         var configuredUser = GetUserFromEmail(_allowedRecipient);
+
         if (!string.IsNullOrWhiteSpace(configuredUser) && _recipientFolders.Contains(configuredUser, StringComparer.OrdinalIgnoreCase))
         {
             SelectRecipient(configuredUser);
         }
         else if (!string.IsNullOrWhiteSpace(_selectedRecipient))
         {
-            SelectRecipient(_selectedRecipient.ToLower());
+            SelectRecipient(_selectedRecipient);
         }
         else if (_recipientFolders.Count > 0)
         {
@@ -180,6 +181,7 @@
         try
         {
             var configAllowed = Configuration["SmtpServer:AllowedRecipient"];
+
             if (!string.IsNullOrWhiteSpace(configAllowed))
             {
                 _allowedRecipient = configAllowed.ToLower();
@@ -195,6 +197,7 @@
 
             var table = TableServiceClient.GetTableClient("SMTPSettings");
             var resp = await table.GetEntityIfExistsAsync<TableEntity>("SmtpServer", "Current");
+
             if (resp.HasValue)
             {
                 var entity = resp.Value;
@@ -211,6 +214,8 @@
                 }
                 _settingsLoaded = true;
                 _settingsError = null;
+
+                _allowedRecipient = _allowedRecipient?.ToLower();
             }
             else
             {
@@ -356,6 +361,106 @@
         }
     }
 
+    /// <summary>
+    /// Extracts plain text body from raw EML using MimeKit.
+    /// Prefers TextBody, falls back to converting HTML to plain text if needed.
+    /// </summary>
+    private static string ExtractPlainTextBodyWithMimeKit(string raw)
+    {
+        if (string.IsNullOrEmpty(raw)) 
+            return string.Empty;
+
+        try
+        {
+            // Skip custom X-SMTP-Server headers to get to the actual RFC822 message
+            var normalizedRaw = raw.Replace("\r\n", "\n");
+            var headerEnd = normalizedRaw.IndexOf("\n\n");
+            string emlContent = raw;
+            
+            if (headerEnd > 0)
+            {
+                var afterFirst = headerEnd + 2;
+                var firstLineAfter = normalizedRaw.Substring(afterFirst).Split('\n').FirstOrDefault() ?? "";
+                
+                if (firstLineAfter.Contains(':') && !firstLineAfter.StartsWith(" ") && !firstLineAfter.StartsWith("\t"))
+                {
+                    emlContent = raw.Substring(raw.IndexOf("\r\n\r\n") + 4);
+                    if (emlContent == raw)
+                        emlContent = raw.Substring(headerEnd + 2);
+                }
+            }
+
+            using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(emlContent));
+            var message = MimeMessage.Load(stream);
+
+            // Prefer plain text body
+            if (!string.IsNullOrEmpty(message.TextBody))
+            {
+                return message.TextBody;
+            }
+
+            // If only HTML is available, convert to plain text
+            if (!string.IsNullOrEmpty(message.HtmlBody))
+            {
+                return ConvertHtmlToPlainText(message.HtmlBody);
+            }
+
+            // Try body parts directly
+            var textPart = message.BodyParts.OfType<TextPart>().FirstOrDefault(p => !p.IsHtml);
+            if (textPart != null)
+            {
+                return textPart.Text;
+            }
+
+            var htmlPart = message.BodyParts.OfType<TextPart>().FirstOrDefault(p => p.IsHtml);
+            if (htmlPart != null)
+            {
+                return ConvertHtmlToPlainText(htmlPart.Text);
+            }
+
+            return "(No readable content)";
+        }
+        catch
+        {
+            return FallbackExtractBody(raw);
+        }
+    }
+
+    /// <summary>
+    /// Converts HTML to plain text by stripping tags and decoding entities.
+    /// </summary>
+    private static string ConvertHtmlToPlainText(string html)
+    {
+        if (string.IsNullOrEmpty(html))
+            return string.Empty;
+
+        // Remove style and script blocks
+        var result = System.Text.RegularExpressions.Regex.Replace(html, @"<style[^>]*>[\s\S]*?</style>", "", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        result = System.Text.RegularExpressions.Regex.Replace(result, @"<script[^>]*>[\s\S]*?</script>", "", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        
+        // Replace <br>, <p>, <div> with newlines
+        result = System.Text.RegularExpressions.Regex.Replace(result, @"<br\s*/?>", "\n", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        result = System.Text.RegularExpressions.Regex.Replace(result, @"</p>", "\n\n", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        result = System.Text.RegularExpressions.Regex.Replace(result, @"</div>", "\n", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        result = System.Text.RegularExpressions.Regex.Replace(result, @"</tr>", "\n", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        result = System.Text.RegularExpressions.Regex.Replace(result, @"</td>", "\t", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        result = System.Text.RegularExpressions.Regex.Replace(result, @"</li>", "\n", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        
+        // Strip remaining HTML tags
+        result = System.Text.RegularExpressions.Regex.Replace(result, @"<[^>]+>", "");
+        
+        // Decode HTML entities
+        result = System.Net.WebUtility.HtmlDecode(result);
+        
+        // Normalize whitespace - collapse multiple spaces but preserve newlines
+        result = System.Text.RegularExpressions.Regex.Replace(result, @"[ \t]+", " ");
+        result = System.Text.RegularExpressions.Regex.Replace(result, @"\n[ \t]+", "\n");
+        result = System.Text.RegularExpressions.Regex.Replace(result, @"[ \t]+\n", "\n");
+        result = System.Text.RegularExpressions.Regex.Replace(result, @"\n{3,}", "\n\n");
+        
+        return result.Trim();
+    }
+
     private static string FallbackExtractBody(string raw)
     {
         if (string.IsNullOrEmpty(raw)) return string.Empty;
@@ -425,6 +530,78 @@
         return html;
     }
 
+    /// <summary>
+    /// Parses an email address from the raw EML using MimeKit.
+    /// Returns (emailAddress, displayFormat) where emailAddress is just the address (e.g., "user@example.com")
+    /// and displayFormat includes the name if available (e.g., "John Doe <user@example.com>").
+    /// </summary>
+    private static (string Address, string Display) ParseEmailAddressWithMimeKit(string raw, string headerName, string fallback)
+    {
+        if (string.IsNullOrEmpty(raw))
+            return (fallback, fallback);
+
+        try
+        {
+            // Skip custom X-SMTP-Server headers to get to the actual RFC822 message
+            var normalizedRaw = raw.Replace("\r\n", "\n");
+            var headerEnd = normalizedRaw.IndexOf("\n\n");
+            string emlContent = raw;
+            
+            if (headerEnd > 0)
+            {
+                var afterFirst = headerEnd + 2;
+                var firstLineAfter = normalizedRaw.Substring(afterFirst).Split('\n').FirstOrDefault() ?? "";
+                
+                if (firstLineAfter.Contains(':') && !firstLineAfter.StartsWith(" ") && !firstLineAfter.StartsWith("\t"))
+                {
+                    emlContent = raw.Substring(raw.IndexOf("\r\n\r\n") + 4);
+                    if (emlContent == raw)
+                        emlContent = raw.Substring(headerEnd + 2);
+                }
+            }
+
+            using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(emlContent));
+            var message = MimeMessage.Load(stream);
+
+            InternetAddressList? addressList = headerName.ToLowerInvariant() switch
+            {
+                "from" => message.From,
+                "to" => message.To,
+                "cc" => message.Cc,
+                "bcc" => message.Bcc,
+                "reply-to" => message.ReplyTo,
+                _ => null
+            };
+
+            if (addressList != null && addressList.Count > 0)
+            {
+                var first = addressList[0];
+                if (first is MailboxAddress mailbox)
+                {
+                    var address = mailbox.Address;
+                    var display = string.IsNullOrWhiteSpace(mailbox.Name) 
+                        ? address 
+                        : $"{mailbox.Name} <{address}>";
+                    return (address, display);
+                }
+                else if (first is GroupAddress group && group.Members.Count > 0 && group.Members[0] is MailboxAddress groupMailbox)
+                {
+                    var address = groupMailbox.Address;
+                    var display = string.IsNullOrWhiteSpace(groupMailbox.Name) 
+                        ? address 
+                        : $"{groupMailbox.Name} <{address}>";
+                    return (address, display);
+                }
+            }
+
+            return (fallback, fallback);
+        }
+        catch
+        {
+            return (fallback, fallback);
+        }
+    }
+
     private static string? GetHeader(string raw, string headerName)
     {
         if (string.IsNullOrEmpty(raw)) return null;
@@ -452,8 +629,10 @@
     {
         if (_currentEmail is null) return;
 
-        var originalFrom = GetHeader(_currentEmail.RawEml, "From") ?? _currentEmail.Metadata.From;
-        var originalTo = GetHeader(_currentEmail.RawEml, "To") ?? _allowedRecipient ?? _currentEmail.Metadata.RecipientUser + "@example.com";
+        // Use MimeKit to parse email addresses properly
+        var (fromAddress, fromDisplay) = ParseEmailAddressWithMimeKit(_currentEmail.RawEml, "From", _currentEmail.Metadata.From);
+        var (toAddress, toDisplay) = ParseEmailAddressWithMimeKit(_currentEmail.RawEml, "To", _allowedRecipient ?? _currentEmail.Metadata.RecipientUser + "@example.com");
+        
         var originalSubject = _currentEmail.Metadata.Subject;
         var subject = !string.IsNullOrWhiteSpace(originalSubject) && !originalSubject.StartsWith("re:", StringComparison.OrdinalIgnoreCase)
             ? "re: " + originalSubject
@@ -471,17 +650,18 @@
             sentDisplay = _currentEmail.Metadata.Received.ToLocalTime().ToString("f", CultureInfo.CurrentCulture);
         }
 
-        var quotedHeader = $"From: {originalFrom}\nSent: {sentDisplay}\nTo: {originalTo}\nSubject: {originalSubject}";
-        var (extractedBody, _) = ExtractBodyWithMimeKit(_currentEmail.RawEml);
-        var originalBody = _currentBody ?? extractedBody;
+        // Use display format (with name if available) for the quoted header
+        var quotedHeader = $"From: {fromDisplay}\nSent: {sentDisplay}\nTo: {toDisplay}\nSubject: {originalSubject}";
+        // Extract plain text body for the reply (not HTML)
+        var originalBody = ExtractPlainTextBodyWithMimeKit(_currentEmail.RawEml);
         var defaultBody = "\n\n-----Original Message-----\n" + quotedHeader + "\n\n" + originalBody;
 
         var result = await DialogService.OpenAsync<ComposeEmailDialog>(
             "Reply",
             new Dictionary<string, object?>
             {
-                ["DefaultTo"] = originalFrom,
-                ["DefaultFrom"] = originalTo,
+                ["DefaultTo"] = fromAddress,
+                ["DefaultFrom"] = toAddress,
                 ["DefaultSubject"] = subject,
                 ["DefaultBody"] = defaultBody
             },

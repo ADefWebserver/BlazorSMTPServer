@@ -94,9 +94,8 @@
                     <hr />
                     @if (_isHtmlBody && !string.IsNullOrEmpty(_currentBody))
                     {
-                        <iframe srcdoc="@_currentBody" 
+                        <iframe src="@GetDataUrl(_currentBody)" 
                                 style="width:100%; height:500px; border:1px solid #ccc; background:#fff;" 
-                                sandbox="allow-same-origin" 
                                 title="Email content">
                         </iframe>
                     }
@@ -128,6 +127,20 @@
     private bool _isHtmlBody;
 
     private string DisplaySubject(string? subject) => string.IsNullOrWhiteSpace(subject) ? "(no subject)" : subject!;
+
+    /// <summary>
+    /// Converts HTML content to a data URL for use in iframe src attribute.
+    /// This approach avoids issues with srcdoc encoding and sandbox restrictions.
+    /// </summary>
+    private static string GetDataUrl(string htmlContent)
+    {
+        if (string.IsNullOrEmpty(htmlContent))
+            return "about:blank";
+        
+        var bytes = System.Text.Encoding.UTF8.GetBytes(htmlContent);
+        var base64 = Convert.ToBase64String(bytes);
+        return $"data:text/html;charset=utf-8;base64,{base64}";
+    }
 
     protected override async Task OnInitializedAsync()
     {
@@ -476,18 +489,17 @@
 
     /// <summary>
     /// Builds a dictionary mapping Content-ID values to data URLs for embedded images.
+    /// Also maps attachment filenames to data URLs for images referenced by filename.
     /// </summary>
     private static Dictionary<string, string> BuildCidMap(MimeMessage message)
     {
         var cidMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
+        // Iterate over all body parts (MimeKit flattens the structure)
         foreach (var bodyPart in message.BodyParts)
         {
-            if (bodyPart is MimePart mimePart && !string.IsNullOrEmpty(mimePart.ContentId))
+            if (bodyPart is MimePart mimePart)
             {
-                // Get the Content-ID without angle brackets
-                var contentId = mimePart.ContentId.Trim('<', '>');
-                
                 // Only process image types
                 if (mimePart.ContentType.MediaType.Equals("image", StringComparison.OrdinalIgnoreCase))
                 {
@@ -498,7 +510,32 @@
                         var base64 = Convert.ToBase64String(memoryStream.ToArray());
                         var mimeType = mimePart.ContentType.MimeType;
                         var dataUrl = $"data:{mimeType};base64,{base64}";
-                        cidMap[contentId] = dataUrl;
+
+                        // Map by Content-ID if present
+                        if (!string.IsNullOrEmpty(mimePart.ContentId))
+                        {
+                            var contentId = mimePart.ContentId.Trim('<', '>');
+                            cidMap[contentId] = dataUrl;
+                            
+                            // Also add without any domain suffix (e.g., "image001" from "image001@domain")
+                            var atIndex = contentId.IndexOf('@');
+                            if (atIndex > 0)
+                            {
+                                cidMap[contentId.Substring(0, atIndex)] = dataUrl;
+                            }
+                        }
+
+                        // Also map by filename for images referenced by name
+                        if (!string.IsNullOrEmpty(mimePart.FileName))
+                        {
+                            cidMap[mimePart.FileName] = dataUrl;
+                        }
+
+                        // Map by Content-Location if present
+                        if (mimePart.ContentLocation != null)
+                        {
+                            cidMap[mimePart.ContentLocation.ToString()] = dataUrl;
+                        }
                     }
                     catch
                     {
@@ -508,23 +545,96 @@
             }
         }
 
+        // Also check attachments (not just body parts)
+        foreach (var attachment in message.Attachments)
+        {
+            if (attachment is MimePart mimePart && 
+                mimePart.ContentType.MediaType.Equals("image", StringComparison.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    using var memoryStream = new MemoryStream();
+                    mimePart.Content.DecodeTo(memoryStream);
+                    var base64 = Convert.ToBase64String(memoryStream.ToArray());
+                    var mimeType = mimePart.ContentType.MimeType;
+                    var dataUrl = $"data:{mimeType};base64,{base64}";
+
+                    if (!string.IsNullOrEmpty(mimePart.ContentId))
+                    {
+                        var contentId = mimePart.ContentId.Trim('<', '>');
+                        if (!cidMap.ContainsKey(contentId))
+                            cidMap[contentId] = dataUrl;
+                    }
+
+                    if (!string.IsNullOrEmpty(mimePart.FileName) && !cidMap.ContainsKey(mimePart.FileName))
+                    {
+                        cidMap[mimePart.FileName] = dataUrl;
+                    }
+                }
+                catch
+                {
+                    // Skip if we can't decode the image
+                }
+            }
+        }
+
         return cidMap;
     }
 
     /// <summary>
     /// Replaces cid: references in HTML with data URLs from the CID map.
+    /// Also handles other common image reference patterns.
     /// </summary>
     private static string ReplaceCidReferences(string html, Dictionary<string, string> cidMap)
     {
-        if (string.IsNullOrEmpty(html) || cidMap.Count == 0)
+        if (string.IsNullOrEmpty(html))
             return html;
 
-        // Replace cid: references with data URLs
-        // Pattern matches src="cid:..." or src='cid:...'
-        foreach (var kvp in cidMap)
+        if (cidMap.Count > 0)
         {
-            // Handle various formats: cid:contentId or cid:contentId@domain
-            html = html.Replace($"cid:{kvp.Key}", kvp.Value, StringComparison.OrdinalIgnoreCase);
+            // Replace cid: references with data URLs using regex for better matching
+            // Handles: src="cid:xxx", src='cid:xxx', src=cid:xxx
+            var cidPattern = new System.Text.RegularExpressions.Regex(
+                @"(src\s*=\s*[""']?)cid:([^""'\s>]+)([""']?)",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+            html = cidPattern.Replace(html, match =>
+            {
+                var prefix = match.Groups[1].Value;
+                var cidRef = match.Groups[2].Value;
+                var suffix = match.Groups[3].Value;
+
+                // Try exact match first
+                if (cidMap.TryGetValue(cidRef, out var dataUrl))
+                {
+                    return $"{prefix}{dataUrl}{suffix}";
+                }
+
+                // Try without domain suffix
+                var atIndex = cidRef.IndexOf('@');
+                if (atIndex > 0)
+                {
+                    var baseCid = cidRef.Substring(0, atIndex);
+                    if (cidMap.TryGetValue(baseCid, out dataUrl))
+                    {
+                        return $"{prefix}{dataUrl}{suffix}";
+                    }
+                }
+
+                // Return original if no match found
+                return match.Value;
+            });
+
+            // Also replace filename references in src attributes
+            foreach (var kvp in cidMap)
+            {
+                // Handle src="filename.jpg" pattern (without cid:)
+                html = System.Text.RegularExpressions.Regex.Replace(
+                    html,
+                    $@"(src\s*=\s*[""'])({System.Text.RegularExpressions.Regex.Escape(kvp.Key)})([""'])",
+                    $"$1{kvp.Value}$3",
+                    System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            }
         }
 
         return html;

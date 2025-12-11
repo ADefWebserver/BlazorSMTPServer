@@ -140,3 +140,4 @@ sequenceDiagram
     Store-->>Server: SmtpResponse.Ok
     Server-->>Client: 250 OK
 ```
+Also see: [https://github.com/ADefWebserver/BlazorSMTPForwarder](https://github.com/ADefWebserver/BlazorSMTPForwarder)

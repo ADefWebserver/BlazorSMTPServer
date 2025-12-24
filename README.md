@@ -1,5 +1,6 @@
 # BLAZOR SMTP SERVER
 ## Read the Blog post: [Create Your Own SMTP Server Using Aspire 13](https://blazorhelpwebsite.com/ViewBlogPost/20080)
+## Also see: [https://github.com/ADefWebserver/BlazorSMTPForwarder](https://github.com/ADefWebserver/BlazorSMTPForwarder)
 <img width="945" height="705" alt="image" src="https://github.com/user-attachments/assets/e34394b3-ae06-4e1e-b94f-7222e63a4e94" />
 
 <img width="1176" height="698" alt="image" src="https://github.com/user-attachments/assets/ecb0d8fe-16fa-4529-b80d-1308fb674187" />
